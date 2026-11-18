@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Generated application and distribution files
+out/
+release/
+dist/
+src/renderer/public/pdfjs/
+*.tsbuildinfo
+
+# Test reports, coverage, and local artifacts
+test-results/
+playwright-report/
+coverage/
+tests/.artifacts/
+.artifacts/
+
+# Local environment and machine-specific files
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+!.env.sample

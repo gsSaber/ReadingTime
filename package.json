@@ -1,0 +1,107 @@
+{
+  "name": "reading-time",
+  "version": "1.0.7",
+  "description": "阅读时光 — 一款以划词自动翻译为核心的本地 PDF 阅读器",
+  "main": "./out/main/index.js",
+  "author": "ReadingTime",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "build": "npm run typecheck && electron-vite build",
+    "dist": "npm run build && electron-builder --mac",
+    "test:e2e": "npm run build && playwright test -c tests/playwright.config.ts",
+    "test:unit": "node --experimental-strip-types --no-warnings --test tests/unit/*.test.mjs",
+    "prepare:pdfjs": "node scripts/copy-pdfjs-assets.mjs",
+    "predev": "npm run prepare:pdfjs",
+    "prebuild": "npm run prepare:pdfjs",
+    "test": "npm run test:unit && npm run test:e2e"
+  },
+  "dependencies": {
+    "pdfjs-dist": "5.5.207",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "38.8.6",
+    "electron-builder": "26.18.0",
+    "electron-vite": "4.0.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.8"
+  },
+  "build": {
+    "appId": "com.readingtime.reader",
+    "productName": "阅读时光",
+    "artifactName": "ReadingTime-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "extendInfo": {
+        "NSHumanReadableCopyright": "ReadingTime"
+      },
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "阅读时光 ${version}",
+      "window": {
+        "width": 560,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 150,
+          "y": 190,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 190,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "fileAssociations": [
+      {
+        "ext": "pdf",
+        "name": "PDF 文档",
+        "role": "Viewer",
+        "rank": "Alternate"
+      }
+    ]
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:*;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>阅读时光</title>
+    <script>
+      try {
+        const tone = localStorage.getItem('reading-time:tone')
+        document.documentElement.dataset.readerTone =
+          ['original', 'sepia', 'night'].includes(tone) ? tone : 'original'
+      } catch { /* Settings from the main process remain authoritative. */ }
+      // PDF.js uses the newest Map upsert proposal. Provide it on Chromium
+      // versions that don't ship the method yet, before the app bundle runs.
+      (function () {
+        const install = (Constructor, withComputation) => {
+          if (!Constructor || Constructor.prototype.getOrInsertComputed) return
+          Object.defineProperty(Constructor.prototype, 'getOrInsertComputed', {
+            configurable: true,
+            writable: true,
+            value: function (key, callback) {
+              if (this.has(key)) return this.get(key)
+              const value = callback(key)
+              this.set(key, value)
+              return value
+            }
+          })
+        }
+        install(Map)
+        install(WeakMap)
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
