@@ -11,6 +11,7 @@ import { FONT_OPTIONS, MODEL_PRESETS, TARGET_LANGUAGES } from '../lib/constants'
 import { cn } from '../lib/format'
 import { Icon } from './Icon'
 import { Modal, ModalCloseButton, Toggle } from './Modal'
+import { TranslationRuntimeSettings } from './TranslationRuntimeSettings'
 
 type SettingsTab = 'model' | 'translation' | 'reading'
 
@@ -254,7 +255,7 @@ export function SettingsModal({
                 <section className="form-section">
                   <div className="section-heading">
                     <h3>连接参数</h3>
-                    <span>请求由主进程发出，API Key 不会暴露给阅读页面。</span>
+                    <span>请求由独立翻译进程发出，API Key 不会暴露给阅读页面。</span>
                   </div>
                   <div className="form-grid">
                     <label className="field field-wide">
@@ -378,7 +379,7 @@ export function SettingsModal({
                 <section className="form-section endpoint-section">
                   <div className="section-heading">
                     <h3>调用方式</h3>
-                    <span>所有请求都在 Electron 主进程中发出，渲染页面接触不到密钥。</span>
+                    <span>模型请求由独立翻译进程发出，渲染页面接触不到密钥。</span>
                   </div>
                   <div className="endpoint-preview">
                     <span className="http-method">POST</span>
@@ -404,6 +405,7 @@ export function SettingsModal({
 
             {tab === 'translation' ? (
               <div className="settings-section-stack">
+                <TranslationRuntimeSettings />
                 <section className="form-section">
                   <div className="section-heading">
                     <h3>翻译行为</h3>
@@ -467,7 +469,7 @@ export function SettingsModal({
                       </span>
                       <input
                         type="range"
-                        min="13"
+                        min="6"
                         max="30"
                         step="1"
                         value={preferences.translationFontSize}
@@ -482,7 +484,7 @@ export function SettingsModal({
                       </span>
                       <input
                         type="range"
-                        min="1.3"
+                        min="0"
                         max="2.4"
                         step="0.1"
                         value={preferences.translationLineHeight}

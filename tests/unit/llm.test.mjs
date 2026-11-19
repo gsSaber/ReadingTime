@@ -9,7 +9,7 @@ import {
   resolveChatEndpoint,
   testConnection,
   translateText
-} from '../../src/main/llm.ts'
+} from '../../src/translation/llm.ts'
 
 async function startMockServer(handler) {
   const server = createServer(handler)

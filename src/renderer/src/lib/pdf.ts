@@ -7,7 +7,6 @@ import {
 } from 'pdfjs-dist'
 import { MAX_SELECTION_LENGTH } from '@shared/types'
 import type { SelectionContext } from '@shared/types'
-import { detectTranslationMode } from '@shared/lookup'
 import { getSelectionContext } from './selection-context'
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs/pdf.worker.min.mjs', document.baseURI).href
@@ -148,7 +147,7 @@ export function getSelectedPdfText(root: HTMLElement): SelectedText | null {
   return {
     text,
     truncated,
-    context: detectTranslationMode(text) === 'lookup' ? getSelectionContext(range, selectionElement) : undefined,
+    context: getSelectionContext(range, selectionElement),
     rect: { left, top, right, bottom }
   }
 }

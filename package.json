@@ -15,6 +15,7 @@
     "test:e2e": "npm run build && playwright test -c tests/playwright.config.ts",
     "test:unit": "node --experimental-strip-types --no-warnings --test tests/unit/*.test.mjs",
     "prepare:pdfjs": "node scripts/copy-pdfjs-assets.mjs",
+    "runtime:pack": "node --experimental-strip-types --no-warnings scripts/build-translation-update.mjs",
     "predev": "npm run prepare:pdfjs",
     "prebuild": "npm run prepare:pdfjs",
     "test": "npm run test:unit && npm run test:e2e"

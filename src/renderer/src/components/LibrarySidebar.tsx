@@ -44,10 +44,35 @@ function BookCover({ entry }: { entry: LibraryEntry }): React.JSX.Element {
       aria-hidden="true"
     >
       <span className="book-cover-initial">{initial}</span>
-      <span className="book-cover-label">PDF</span>
-      <span className="book-cover-progress" style={{ width: `${Math.max(3, progress)}%` }} />
+      <span className="book-cover-label">{progress >= 100 ? '读完' : 'PDF'}</span>
+      {progress > 0 ? (
+        <span className="book-cover-progress" style={{ width: `${progress}%` }} />
+      ) : null}
     </div>
   )
+}
+
+type SortMode = 'recent' | 'added' | 'progress' | 'title'
+type StatusFilter = 'all' | 'reading' | 'finished' | 'unread'
+
+const SORT_KEY = 'reading-time:library-sort'
+const FILTER_KEY = 'reading-time:library-filter'
+const SORT_OPTIONS: Array<{ id: SortMode; label: string }> = [
+  { id: 'recent', label: '最近阅读' },
+  { id: 'added', label: '最近导入' },
+  { id: 'progress', label: '阅读进度' },
+  { id: 'title', label: '书名' }
+]
+const FILTER_OPTIONS: Array<{ id: StatusFilter; label: string }> = [
+  { id: 'all', label: '全部' },
+  { id: 'reading', label: '在读' },
+  { id: 'finished', label: '读完' },
+  { id: 'unread', label: '未读' }
+]
+
+function storedChoice<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  const stored = localStorage.getItem(key)
+  return stored && (allowed as readonly string[]).includes(stored) ? (stored as T) : fallback
 }
 
 export function LibrarySidebar({
@@ -64,13 +89,54 @@ export function LibrarySidebar({
 }: LibrarySidebarProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [menuId, setMenuId] = useState<string | null>(null)
+  const [sortMode, setSortMode] = useState<SortMode>(() =>
+    storedChoice(SORT_KEY, SORT_OPTIONS.map((option) => option.id), 'recent')
+  )
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() =>
+    storedChoice(FILTER_KEY, FILTER_OPTIONS.map((option) => option.id), 'all')
+  )
   const listRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
 
   const filteredEntries = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    if (!needle) return entries
-    return entries.filter((entry) => entry.title.toLowerCase().includes(needle))
-  }, [entries, query])
+    const matches = entries.filter((entry) => {
+      if (needle && !entry.title.toLowerCase().includes(needle)) return false
+      const progress = progressPercent(entry)
+      if (statusFilter === 'finished') return entry.pageCount > 0 && progress >= 100
+      if (statusFilter === 'reading') return entry.pageCount > 0 && progress > 0 && progress < 100
+      if (statusFilter === 'unread') return entry.pageCount === 0 || progress === 0
+      return true
+    })
+    return matches.sort((a, b) => {
+      if (sortMode === 'added') return b.addedAt - a.addedAt
+      if (sortMode === 'progress') return progressPercent(b) - progressPercent(a)
+      if (sortMode === 'title') return a.title.localeCompare(b.title, 'zh-CN')
+      return (b.openedAt || b.addedAt) - (a.openedAt || a.addedAt)
+    })
+  }, [entries, query, sortMode, statusFilter])
+
+  useEffect(() => {
+    localStorage.setItem(SORT_KEY, sortMode)
+  }, [sortMode])
+
+  useEffect(() => {
+    localStorage.setItem(FILTER_KEY, statusFilter)
+  }, [statusFilter])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const withModifier = event.metaKey || event.ctrlKey
+      if (withModifier && event.key.toLowerCase() === 'f' && !event.shiftKey && !event.altKey) {
+        if (document.querySelector('.modal-layer')) return
+        event.preventDefault()
+        searchRef.current?.focus()
+        searchRef.current?.select()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   const modelReady = Boolean(settings.llm.baseUrl && settings.llm.modelId)
 
@@ -118,9 +184,17 @@ export function LibrarySidebar({
         <label className={cn('search-box', !entries.length && 'is-disabled')}>
           <Icon name="search" size={15} />
           <input
+            ref={searchRef}
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && query) {
+                event.preventDefault()
+                event.stopPropagation()
+                setQuery('')
+              }
+            }}
             placeholder="搜索书架"
             disabled={!entries.length}
             aria-label="搜索 PDF 资料库"
@@ -129,13 +203,50 @@ export function LibrarySidebar({
             <button
               type="button"
               className="search-clear"
-              onClick={() => setQuery('')}
+              onClick={() => {
+                setQuery('')
+                searchRef.current?.focus()
+              }}
               aria-label="清空搜索"
             >
               <Icon name="x" size={12} />
             </button>
+          ) : entries.length ? (
+            <span className="search-shortcut" aria-hidden="true">⌘F</span>
           ) : null}
         </label>
+        {entries.length > 1 ? (
+          <div className="library-controls">
+            <label className="library-sort">
+              <span className="visually-hidden">排序方式</span>
+              <select
+                value={sortMode}
+                onChange={(event) => setSortMode(event.target.value as SortMode)}
+                aria-label="排序方式"
+              >
+                {SORT_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <Icon name="chevron-down" size={12} />
+            </label>
+            <div className="library-filters" role="group" aria-label="按阅读状态筛选">
+              {FILTER_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={cn(statusFilter === option.id && 'is-active')}
+                  aria-pressed={statusFilter === option.id}
+                  onClick={() => setStatusFilter(option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="library-list" ref={listRef}>
@@ -171,12 +282,16 @@ export function LibrarySidebar({
                   <span className="doc-size">{formatFileSize(entry.size)}</span>
                 </div>
                 <div className="doc-progress" aria-hidden="true">
-                  <span style={{ width: `${progress}%` }} />
+                  {progress > 0 ? <span style={{ width: `${progress}%` }} /> : null}
                 </div>
                 <p className="doc-last-opened">
-                  {entry.lastPage > 1 && entry.pageCount > 0
-                    ? `读到第 ${entry.lastPage} 页`
-                    : formatRelativeDate(entry.openedAt || entry.addedAt)}
+                  {progress >= 100 && entry.pageCount > 0 ? (
+                    <span className="doc-finished-tag">已读完</span>
+                  ) : entry.lastPage > 1 && entry.pageCount > 0 ? (
+                    `读到第 ${entry.lastPage} 页`
+                  ) : (
+                    formatRelativeDate(entry.openedAt || entry.addedAt)
+                  )}
                 </p>
               </div>
               <div className="doc-actions" data-menu-root={entry.id}>
@@ -235,8 +350,25 @@ export function LibrarySidebar({
 
         {entries.length > 0 && filteredEntries.length === 0 ? (
           <div className="sidebar-empty">
-            <p>没有找到“{query}”。</p>
-            <span>换一个关键词试试。</span>
+            <p>{query ? `没有找到“${query}”。` : '这个分类下还没有书。'}</p>
+            <span>
+              {query ? '换一个关键词试试。' : '换一个筛选条件看看。'}
+              {query || statusFilter !== 'all' ? (
+                <>
+                  {' '}
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      setQuery('')
+                      setStatusFilter('all')
+                    }}
+                  >
+                    清除筛选
+                  </button>
+                </>
+              ) : null}
+            </span>
           </div>
         ) : null}
       </div>

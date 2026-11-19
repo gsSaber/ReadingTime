@@ -117,12 +117,12 @@ export class SettingsStore {
       translationFontSize:
         typeof input.translationFontSize === 'number' &&
         Number.isFinite(input.translationFontSize)
-          ? clamp(Math.round(input.translationFontSize), 13, 30)
+          ? clamp(Math.round(input.translationFontSize), 6, 30)
           : fallback.translationFontSize,
       translationLineHeight:
         typeof input.translationLineHeight === 'number' &&
         Number.isFinite(input.translationLineHeight)
-          ? clamp(Math.round(input.translationLineHeight * 10) / 10, 1.3, 2.4)
+          ? clamp(Math.round(input.translationLineHeight * 10) / 10, 0, 2.4)
           : fallback.translationLineHeight,
       readerTone:
         typeof input.readerTone === 'string' &&

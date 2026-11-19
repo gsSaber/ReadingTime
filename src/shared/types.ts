@@ -119,6 +119,25 @@ export interface TranslateResult {
   cancelled?: boolean
   mode?: TranslationMode
   lookup?: LookupEntry
+  runtimeVersion?: string
+  runtimeId?: string
+  strategyVersion?: string
+}
+
+export interface TranslationRuntimeStatus {
+  id: string
+  version: string
+  strategyVersion: string
+  builtin: boolean
+  canRollback: boolean
+  lastError?: string
+}
+
+export interface TranslationUpdateResult {
+  ok: boolean
+  canceled?: boolean
+  status: TranslationRuntimeStatus
+  error?: string
 }
 
 export interface TranslationDelta {
@@ -152,6 +171,12 @@ export interface ReadingTimeApi {
     start: (input: TranslateInput) => Promise<TranslateResult>
     cancel: (requestId: string) => Promise<void>
     onDelta: (callback: (payload: TranslationDelta) => void) => () => void
+  }
+  translationRuntime: {
+    status: () => Promise<TranslationRuntimeStatus>
+    importUpdate: () => Promise<TranslationUpdateResult>
+    rollback: () => Promise<TranslationUpdateResult>
+    restoreBuiltin: () => Promise<TranslationUpdateResult>
   }
   app: {
     ready: () => Promise<void>

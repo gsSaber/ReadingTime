@@ -172,7 +172,7 @@ async function launchApp(
 async function configureModel(
   page: Page,
   baseUrl: string,
-  options: { expectConnection?: 'success' | 'error' } = {}
+  options: { expectConnection?: 'success' | 'error'; apiKey?: string } = {}
 ): Promise<void> {
   await page.getByRole('button', { name: '打开设置' }).click()
   await expect(page.locator('.settings-modal')).toBeVisible()
@@ -180,7 +180,7 @@ async function configureModel(
   await expect(baseInput).toBeVisible()
   await baseInput.fill(baseUrl)
   await page.locator('input[placeholder="例如 gpt-4o-mini"]').fill('mock-translator')
-  await page.locator('input[placeholder*="无需鉴权"]').fill('test-key-123')
+  await page.locator('input[placeholder*="无需鉴权"]').fill(options.apiKey ?? 'test-key-123')
   await expect(page.getByRole('button', { name: '保存设置' })).toBeInViewport()
   await page.getByRole('button', { name: '测试连接' }).click()
   await expect(page.locator('.test-result')).toContainText(
@@ -365,6 +365,72 @@ test('shows helpful errors for a missing model and rejected credentials', async 
   }
 })
 
+test('adopts strategy and executable updates without restarting the reader, drains streams and persists rollback', async () => {
+  const mock = await startMockLlm('stream', 250)
+  let session = await launchApp('runtime-update', { startupPdf: FIXTURE })
+  let { app, page } = session
+  try {
+    await configureModel(page, mock.baseUrl)
+    const policyPath = resolve(session.profile, 'personal-strategy.json')
+    const policy = JSON.parse(readFileSync(resolve(ROOT, 'src/translation/default-strategy.json'), 'utf8'))
+    policy.version = 'e2e-policy-v2'
+    policy.translationPrompt += '\nPolicy marker: e2e-policy-v2'
+    writeFileSync(policyPath, JSON.stringify(policy))
+    const originalPid = await app.evaluate(() => process.pid)
+    const contentsId = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.id)
+    await page.evaluate(() => {
+      Reflect.set(window, 'runtimeSentinel', 'same-reading-window')
+      Reflect.set(window, 'oldTranslation', window.readingTime.translate.start({
+        requestId: 'old-stream', text: 'An ongoing translation.', targetLanguage: '简体中文', mode: 'translation'
+      }))
+    })
+    await expect.poll(() => mock.requests.filter(r => r.body.stream).length).toBe(1)
+    await app.evaluate(({ dialog }, path) => {
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog
+    }, policyPath)
+    await page.getByRole('button', { name: '打开设置' }).click()
+    await page.getByRole('button', { name: '翻译偏好', exact: true }).click()
+    await page.getByRole('button', { name: '导入翻译更新', exact: true }).click()
+    await expect(page.getByRole('region', { name: '翻译版本' })).toContainText('e2e-policy-v2')
+    const oldResult = await page.evaluate(() => Reflect.get(window, 'oldTranslation'))
+    expect(oldResult.ok).toBe(true)
+    expect(oldResult.strategyVersion).toBe('builtin-1')
+    const fresh = await page.evaluate(() => window.readingTime.translate.start({
+      requestId: 'new-stream', text: 'A new translation.', targetLanguage: '简体中文', mode: 'translation'
+    }))
+    expect(fresh.strategyVersion).toBe('e2e-policy-v2')
+    expect(JSON.stringify(mock.requests.at(-1)?.body)).toContain('Policy marker: e2e-policy-v2')
+    expect(await app.evaluate(() => process.pid)).toBe(originalPid)
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.id)).toBe(contentsId)
+    expect(await page.evaluate(() => Reflect.get(window, 'runtimeSentinel'))).toBe('same-reading-window')
+    await page.getByRole('button', { name: '回滚上一版本', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => window.readingTime.translationRuntime.status())).toMatchObject({ builtin: true })
+
+    const output = resolve(session.profile, 'code-update')
+    execFileSync(process.execPath, ['--experimental-strip-types', '--no-warnings',
+      'scripts/build-translation-update.mjs', '--policy', policyPath, '--out', output,
+      '--engine', 'src/translation/engine.ts', '--version', 'e2e-code-v2'], { cwd: ROOT, stdio: 'pipe' })
+    await app.evaluate(({ dialog }, path) => {
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog
+    }, resolve(output, 'manifest.json'))
+    await page.getByRole('button', { name: '导入翻译更新', exact: true }).click()
+    await expect(page.getByRole('region', { name: '翻译版本' })).toContainText('e2e-code-v2')
+    expect((await page.evaluate(() => window.readingTime.translate.start({
+      requestId: 'code-update', text: 'A code update.', targetLanguage: '简体中文', mode: 'translation'
+    }))).runtimeVersion).toBe('e2e-code-v2')
+    expect(await app.evaluate(() => process.pid)).toBe(originalPid)
+    expect(session.errors).toEqual([])
+    await app.close()
+    session = await launchApp('runtime-update', { reuseProfile: true })
+    app = session.app
+    page = session.page
+    expect((await page.evaluate(() => window.readingTime.translationRuntime.status())).version).toBe('e2e-code-v2')
+    expect((await page.evaluate(() => window.readingTime.translationRuntime.rollback())).status.builtin).toBe(true)
+    await expect(page.locator('.doc-entry h3')).toHaveText('quiet-reading')
+    expect(session.errors).toEqual([])
+  } finally { await app.close().catch(() => {}); await mock.close() }
+})
+
 test('switches the whole reading theme and restores it after restarting', async () => {
   const first = await launchApp('themes', { startupPdf: FIXTURE })
   let { app, page } = first
@@ -425,6 +491,7 @@ test('packaged macOS app uses its own identity and opens PDFs', async () => {
     executablePath: resolve(ROOT, 'release/mac-arm64/阅读时光.app/Contents/MacOS/阅读时光'),
     args: [FIXTURE], cwd: ROOT, env
   })
+  const mock = await startMockLlm('stream', 5)
   try {
     const page = await app.firstWindow()
     const identity = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion() }))
@@ -440,8 +507,35 @@ test('packaged macOS app uses its own identity and opens PDFs', async () => {
     await page.getByRole('scrollbar', { name: 'PDF 阅读滚动条' }).focus()
     await page.keyboard.press('End')
     await expect(page.locator('.page-number input')).toHaveValue('3')
+    // Exercise the ASAR bootstrap and an executable module outside the .app.
+    // An ad-hoc signed test bundle must not require interactive Keychain access.
+    await configureModel(page, mock.baseUrl, { apiKey: '' })
+    expect((await page.evaluate(() => window.readingTime.translationRuntime.status())).builtin).toBe(true)
+    const policy = JSON.parse(readFileSync(resolve(ROOT, 'src/translation/default-strategy.json'), 'utf8'))
+    policy.version = 'packaged-policy-v2'
+    policy.translationPrompt += '\nPackaged runtime marker'
+    const policyPath = resolve(profile, 'strategy.json')
+    writeFileSync(policyPath, JSON.stringify(policy))
+    const updateDir = resolve(profile, 'update')
+    execFileSync(process.execPath, ['--experimental-strip-types', '--no-warnings',
+      'scripts/build-translation-update.mjs', '--policy', policyPath, '--out', updateDir,
+      '--engine', 'src/translation/engine.ts', '--version', 'packaged-engine-v2'], { cwd: ROOT, stdio: 'pipe' })
+    const pid = await app.evaluate(() => process.pid)
+    await app.evaluate(({ dialog }, path) => {
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog
+    }, resolve(updateDir, 'manifest.json'))
+    expect((await page.evaluate(() => window.readingTime.translationRuntime.importUpdate())).ok).toBe(true)
+    const result = await page.evaluate(() => window.readingTime.translate.start({
+      requestId: 'packaged-module', text: 'A packaged update.', targetLanguage: '简体中文', mode: 'translation'
+    }))
+    expect(result.ok).toBe(true)
+    expect(result.runtimeVersion).toBe('packaged-engine-v2')
+    expect(JSON.stringify(mock.requests.at(-1)?.body)).toContain('Packaged runtime marker')
+    expect(await app.evaluate(() => process.pid)).toBe(pid)
+    expect((await page.evaluate(() => window.readingTime.translationRuntime.restoreBuiltin())).status.builtin).toBe(true)
   } finally {
     await app.close().catch(() => {})
+    await mock.close()
   }
 })
 
@@ -677,9 +771,7 @@ test('explains vocabulary with the selected occurrence context and preserves tra
     await expect(page.locator('.translation-status')).toContainText('词语释义完成')
     await expect(page.getByRole('group', { name: '选区解读方式' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '原文翻译', exact: true })).toHaveCount(0)
-    await page.locator('.vocabulary-context-source summary').click()
-    await expect(page.locator('.vocabulary-context-source blockquote')).toContainText('Reading is not a race')
-    await expect(page.locator('.vocabulary-context-source mark')).toHaveText('Reading')
+    await expect(page.locator('.vocabulary-context-source')).toHaveCount(0)
     const lookupRequests = () => mock.requests.filter((req) => JSON.stringify(req.body.messages).includes('You explain vocabulary'))
     const firstInput = JSON.parse((lookupRequests()[0].body.messages as Array<{ content: string }>)[1].content)
     expect(firstInput.selection).toBe('Reading')

@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { OutlineItem } from '../lib/pdf'
 import { countOutlineItems } from '../lib/pdf'
 import { cn } from '../lib/format'
@@ -12,21 +13,45 @@ interface OutlineDrawerProps {
   onClose: () => void
 }
 
+function matchesQuery(item: OutlineItem, needle: string): boolean {
+  if (item.title.toLowerCase().includes(needle)) return true
+  return item.children.some((child) => matchesQuery(child, needle))
+}
+
+function currentChapterId(items: OutlineItem[], currentPage: number): string | null {
+  let bestPage = -1
+  let bestId: string | null = null
+  const visit = (nodes: OutlineItem[]): void => {
+    for (const node of nodes) {
+      if (node.page && node.page <= currentPage && node.page >= bestPage) {
+        bestPage = node.page
+        bestId = node.id
+      }
+      visit(node.children)
+    }
+  }
+  visit(items)
+  return bestId
+}
+
 function OutlineNode({
   item,
   currentPage,
+  currentChapter,
   onSelectPage
 }: {
   item: OutlineItem
   currentPage: number
+  currentChapter: string | null
   onSelectPage: (page: number) => void
 }): React.JSX.Element {
-  const active = item.page === currentPage
+  const active = item.id === currentChapter
   return (
     <li className={cn('outline-node', `level-${item.level}`)}>
       <button
         type="button"
         className={cn('outline-row', active && 'is-active')}
+        data-outline-current={active || undefined}
         disabled={!item.page}
         onClick={() => item.page && onSelectPage(item.page)}
         style={{ paddingLeft: `${14 + item.level * 16}px` }}
@@ -41,6 +66,7 @@ function OutlineNode({
               key={child.id}
               item={child}
               currentPage={currentPage}
+              currentChapter={currentChapter}
               onSelectPage={onSelectPage}
             />
           ))}
@@ -59,6 +85,25 @@ export function OutlineDrawer({
   onClose
 }: OutlineDrawerProps): React.JSX.Element {
   const count = countOutlineItems(items)
+  const [query, setQuery] = useState('')
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const currentChapter = useMemo(() => currentChapterId(items, currentPage), [items, currentPage])
+
+  const visibleItems = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return items
+    return items.filter((item) => matchesQuery(item, needle))
+  }, [items, query])
+
+  useEffect(() => {
+    if (!open) return
+    const frame = window.requestAnimationFrame(() => {
+      const current = scrollRef.current?.querySelector<HTMLElement>('[data-outline-current]')
+      current?.scrollIntoView({ block: 'center' })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [open])
+
   return (
     <div
       className={cn('outline-layer', open && 'is-open')}
@@ -87,26 +132,51 @@ export function OutlineDrawer({
           <span>{count ? `${count} 个章节` : loading ? '正在读取目录' : '这份 PDF 没有内嵌目录'}</span>
           <span className="outline-current">第 {currentPage} 页</span>
         </div>
-        <div className="outline-scroll">
+        {count > 8 ? (
+          <label className="outline-search">
+            <Icon name="search" size={14} />
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索章节"
+              aria-label="搜索目录章节"
+            />
+            {query ? (
+              <button type="button" className="search-clear" onClick={() => setQuery('')} aria-label="清空章节搜索">
+                <Icon name="x" size={12} />
+              </button>
+            ) : null}
+          </label>
+        ) : null}
+        <div className="outline-scroll" ref={scrollRef}>
           {loading ? (
             <div className="outline-loading">
               <span className="small-spinner" />
               正在整理章节…
             </div>
           ) : items.length ? (
-            <ul className="outline-list">
-              {items.map((item) => (
-                <OutlineNode
-                  key={item.id}
-                  item={item}
-                  currentPage={currentPage}
-                  onSelectPage={(page) => {
-                    onSelectPage(page)
-                    onClose()
-                  }}
-                />
-              ))}
-            </ul>
+            visibleItems.length ? (
+              <ul className="outline-list">
+                {visibleItems.map((item) => (
+                  <OutlineNode
+                    key={item.id}
+                    item={item}
+                    currentPage={currentPage}
+                    currentChapter={currentChapter}
+                    onSelectPage={(page) => {
+                      onSelectPage(page)
+                      onClose()
+                    }}
+                  />
+                ))}
+              </ul>
+            ) : (
+              <div className="outline-empty">
+                <strong>没有匹配的章节</strong>
+                <p>试试更短的关键词，或清空搜索查看完整目录。</p>
+              </div>
+            )
           ) : (
             <div className="outline-empty">
               <span className="outline-empty-icon">

@@ -1,12 +1,14 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, net, protocol, session } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, net, protocol, session, utilityProcess } from 'electron'
 import type { MenuItemConstructorOptions, OpenDialogOptions } from 'electron'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join, normalize, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { LibraryStore } from './library-store'
 import { SettingsStore } from './settings-store'
-import { LlmRequestError, lookupText, testConnection, translateText } from './llm'
-import { detectTranslationMode, formatLookup, MAX_CONTEXT_SIDE } from '../shared/lookup'
+import { LlmRequestError } from '../translation/errors'
+import { TranslationRuntime } from '../translation/runtime'
+import { ReleaseStore } from '../translation/releases'
+import { MAX_CONTEXT_SIDE } from '../shared/lookup'
 import {
   MAX_TRANSLATION_INPUT,
   type AppCommand,
@@ -49,6 +51,7 @@ if (!hasSingleInstanceLock) {
 let mainWindow: BrowserWindow | null = null
 let settingsStore: SettingsStore
 let libraryStore: LibraryStore
+let translationRuntime: TranslationRuntime
 let rendererReady = false
 const pendingOpenPaths: string[] = []
 const translationControllers = new Map<
@@ -401,7 +404,7 @@ function registerIpc(): void {
       modelId: typeof input?.modelId === 'string' ? input.modelId : '',
       apiKey: typeof input?.apiKey === 'string' ? input.apiKey : undefined
     })
-    return testConnection({ baseUrl, modelId, apiKey })
+    return translationRuntime.testConnection({ baseUrl, modelId, apiKey })
   })
 
   ipcMain.handle('translate:start', async (event, input: TranslateInput): Promise<TranslateResult> => {
@@ -454,6 +457,7 @@ function registerIpc(): void {
       }
     }
 
+    if (translationControllers.has(input.requestId)) return { ok: false, error: { code: 'bad_request', message: '翻译请求 ID 重复。' } }
     const controller = new AbortController()
     translationControllers.set(input.requestId, {
       controller,
@@ -466,33 +470,17 @@ function registerIpc(): void {
     let accumulated = ''
 
     try {
-      if ((input.mode ?? detectTranslationMode(input.text)) === 'lookup') {
-        const result = await lookupText({
-          baseUrl: settings.llm.baseUrl, modelId: settings.llm.modelId, apiKey: settingsStore.getApiKey()
-        }, input.text, targetLanguage, input.context, controller.signal, input.mode === 'lookup')
-        if (result.kind === 'translation') return { ok: true, mode: 'translation', text: result.translation }
-        return { ok: true, mode: 'lookup', lookup: result.entry, text: formatLookup(result.entry, input.text) }
-      }
-      const text = await translateText(
-        {
-          baseUrl: settings.llm.baseUrl,
-          modelId: settings.llm.modelId,
-          apiKey: settingsStore.getApiKey()
-        },
-        input.text,
-        targetLanguage,
+      const result = await translationRuntime.translate(
+        { ...input, targetLanguage },
+        { baseUrl: settings.llm.baseUrl, modelId: settings.llm.modelId, apiKey: settingsStore.getApiKey() },
         (delta) => {
           accumulated += delta
-          if (!event.sender.isDestroyed()) {
-            event.sender.send('translate:delta', {
-              requestId: input.requestId,
-              delta
-            })
-          }
+          if (!event.sender.isDestroyed()) event.sender.send('translate:delta', { requestId: input.requestId, delta })
         },
         controller.signal
       )
-      return { ok: true, mode: 'translation', text }
+      if (!result.ok && accumulated && !result.cancelled) result.text = accumulated
+      return result
     } catch (error) {
       const normalized =
         error instanceof LlmRequestError
@@ -520,7 +508,20 @@ function registerIpc(): void {
 
   ipcMain.handle('translate:cancel', (_event, requestId: unknown) => {
     if (typeof requestId !== 'string') return
-    translationControllers.get(requestId)?.controller.abort()
+    const active = translationControllers.get(requestId)
+    if (active?.senderId === _event.sender.id) active.controller.abort()
+  })
+
+  ipcMain.handle('translation-runtime:status', () => translationRuntime.status())
+  ipcMain.handle('translation-runtime:rollback', () => translationRuntime.rollback())
+  ipcMain.handle('translation-runtime:restore', () => translationRuntime.restoreBuiltin())
+  ipcMain.handle('translation-runtime:import', async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender) || mainWindow
+    const options: OpenDialogOptions = { title: '导入翻译策略或更新包', buttonLabel: '导入',
+      properties: ['openFile'], filters: [{ name: '翻译策略或 manifest.json', extensions: ['json'] }] }
+    const selection = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
+    if (selection.canceled || !selection.filePaths.length) return { ok: false, canceled: true, status: translationRuntime.status() }
+    return translationRuntime.install(selection.filePaths[0])
   })
 
   ipcMain.handle('app:get-version', () => app.getVersion())
@@ -561,6 +562,7 @@ function wireAppLifecycle(): void {
   app.on('before-quit', () => {
     for (const { controller } of translationControllers.values()) controller.abort()
     translationControllers.clear()
+    translationRuntime?.close()
   })
 }
 
@@ -571,7 +573,7 @@ function syncNativeTheme(): void {
 if (hasSingleInstanceLock) {
   wireAppLifecycle()
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     if (process.platform === 'darwin' && !app.isPackaged) {
       const devIcon = join(process.cwd(), 'build', 'icon.png')
       if (existsSync(devIcon)) app.dock?.setIcon(devIcon)
@@ -579,6 +581,18 @@ if (hasSingleInstanceLock) {
     settingsStore = new SettingsStore(app.getPath('userData'))
     syncNativeTheme()
     libraryStore = new LibraryStore(app.getPath('userData'))
+    translationRuntime = new TranslationRuntime(
+      new ReleaseStore(app.getPath('userData'), join(__dirname, 'translation-engine.js')),
+      () => utilityProcess.fork(join(__dirname, 'translation-worker.js'), [], {
+        serviceName: 'ReadingTime Translation', stdio: 'ignore',
+        // Do not inherit unrelated credentials from the shell environment.
+        env: Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+          ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'SYSTEMROOT'].includes(key)))
+      })
+    )
+    // Translation failure must not prevent the local reader from opening.
+    try { await translationRuntime.initialize() }
+    catch { console.error('[translation] Translation worker could not start; reading remains available.') }
 
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
       callback(false)

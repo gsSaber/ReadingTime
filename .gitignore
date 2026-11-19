@@ -14,6 +14,8 @@ playwright-report/
 coverage/
 tests/.artifacts/
 .artifacts/
+.playwright-cli/
+.translation-update-*/
 
 # Local environment and machine-specific files
 .DS_Store

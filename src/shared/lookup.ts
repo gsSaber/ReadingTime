@@ -2,17 +2,19 @@ import type { LookupEntry, SelectionContext, TranslationMode } from './types'
 
 export const MAX_CONTEXT_SIDE = 400
 
-export function detectTranslationMode(text: string): TranslationMode {
+export function detectTranslationMode(text: string, limits = {
+  maxLookupCharacters: 80, maxLookupWords: 8, maxCjkCharacters: 16
+}): TranslationMode {
   const value = text.trim()
-  if (!value || value.length > 80) return 'translation'
+  if (!value || value.length > limits.maxLookupCharacters) return 'translation'
   if (/^(?:\p{L}\.){2,}$/u.test(value)) return 'lookup'
   if (/[.!?。！？;；\n]/u.test(value)) return 'translation'
   if (!/\p{L}/u.test(value)) return 'translation'
   // Short unspaced CJK selections are vocabulary candidates as well.
   if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(value)) {
-    return value.replace(/\s/g, '').length <= 16 ? 'lookup' : 'translation'
+    return value.replace(/\s/g, '').length <= limits.maxCjkCharacters ? 'lookup' : 'translation'
   }
-  return value.split(/\s+/u).length <= 8 ? 'lookup' : 'translation'
+  return value.split(/\s+/u).length <= limits.maxLookupWords ? 'lookup' : 'translation'
 }
 
 export function contextAroundSelection(text: string, start: number, end: number): SelectionContext {

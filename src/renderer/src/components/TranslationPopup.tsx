@@ -356,7 +356,7 @@ export function TranslationPopup({
             <button
               type="button"
               onClick={() =>
-                onUpdateAppearance({ translationFontSize: Math.max(13, fontSize - 1) })
+                onUpdateAppearance({ translationFontSize: Math.max(6, fontSize - 1) })
               }
               aria-label="减小译文字号"
             >
@@ -461,12 +461,6 @@ function VocabularyEntry({ entry, selection, context }: {
           </dl>
         ) : <p className="vocabulary-explanation">暂无可靠的常用释义。</p>}
       </section>
-      {hasContext ? (
-        <details className="vocabulary-context-source">
-          <summary>原文语境</summary>
-          <blockquote>{context!.before}{' '}<mark>{selection}</mark>{' '}{context!.after}</blockquote>
-        </details>
-      ) : null}
     </div>
   )
 }

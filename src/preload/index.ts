@@ -39,6 +39,12 @@ const api: ReadingTimeApi = {
       return () => ipcRenderer.removeListener('translate:delta', listener)
     }
   },
+  translationRuntime: {
+    status: () => ipcRenderer.invoke('translation-runtime:status'),
+    importUpdate: () => ipcRenderer.invoke('translation-runtime:import'),
+    rollback: () => ipcRenderer.invoke('translation-runtime:rollback'),
+    restoreBuiltin: () => ipcRenderer.invoke('translation-runtime:restore')
+  },
   app: {
     ready: () => ipcRenderer.invoke('app:ready'),
     getVersion: () => ipcRenderer.invoke('app:get-version') as Promise<string>,

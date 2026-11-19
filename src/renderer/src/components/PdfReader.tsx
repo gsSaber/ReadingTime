@@ -111,6 +111,8 @@ export function PdfReader({
   const [outlineLoading, setOutlineLoading] = useState(true)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [translation, setTranslation] = useState<TranslationViewState | null>(null)
+  const [showBackToTop, setShowBackToTop] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   const scrollRootRef = useRef<HTMLDivElement>(null)
   const pagesRef = useRef<Map<number, HTMLDivElement>>(new Map())
@@ -123,6 +125,7 @@ export function PdfReader({
   const passwordCanceledRef = useRef(false)
   const translationRef = useRef<TranslationViewState | null>(null)
   const activeTranslationIdRef = useRef<string | null>(null)
+  const milestoneRef = useRef(0)
 
   const preferences = settings.preferences
   const numPages = pdf?.numPages ?? 0
@@ -504,6 +507,8 @@ export function PdfReader({
       frame = window.requestAnimationFrame(() => {
         frame = 0
         syncCurrentPageFromScroll()
+        const scrolled = root.scrollTop
+        setShowBackToTop(scrolled > root.clientHeight * 1.2)
       })
     }
     root.addEventListener('scroll', onScroll, { passive: true })
@@ -668,6 +673,10 @@ export function PdfReader({
         return
       }
       if (event.key === 'Escape') {
+        if (shortcutsOpen) {
+          setShortcutsOpen(false)
+          return
+        }
         if (translation) {
           closeTranslation()
           return
@@ -695,6 +704,11 @@ export function PdfReader({
         return
       }
       if (event.altKey) return
+      if (event.key === '?' || (event.shiftKey && event.key === '/')) {
+        event.preventDefault()
+        setShortcutsOpen((open) => !open)
+        return
+      }
       if (event.key === 'ArrowRight' || event.key === 'PageDown') {
         const selection = window.getSelection()
         if (selection && !selection.isCollapsed) return
@@ -709,7 +723,23 @@ export function PdfReader({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [changeZoom, closeTranslation, goRelative, onToggleSidebar, outlineOpen, translation, zoom])
+  }, [changeZoom, closeTranslation, goRelative, onToggleSidebar, outlineOpen, shortcutsOpen, translation, zoom])
+
+  // Celebrate reading milestones once per quarter of the book.
+  useEffect(() => {
+    if (loadStatus !== 'ready' || !initialScrollDoneRef.current || numPages < 8) return
+    const ratio = currentPage / numPages
+    const milestone = ratio >= 1 ? 4 : ratio >= 0.75 ? 3 : ratio >= 0.5 ? 2 : ratio >= 0.25 ? 1 : 0
+    if (milestone <= milestoneRef.current) return
+    milestoneRef.current = milestone
+    const root = scrollRootRef.current
+    if (!root) return
+    const note = document.createElement('div')
+    note.className = 'reading-milestone'
+    note.textContent = milestone === 4 ? '读完全书' : `已读 ${milestone * 25}%`
+    root.appendChild(note)
+    window.setTimeout(() => note.remove(), 2400)
+  }, [currentPage, loadStatus, numPages])
 
   const readerProgress =
     numPages > 0 ? Math.round((currentPage / numPages) * 100) : progressPercent(entry)
@@ -838,6 +868,17 @@ export function PdfReader({
             >
               <Icon name="plus" size={16} />
             </button>
+            {zoom !== 1 ? (
+              <button
+                type="button"
+                className="zoom-reset"
+                onClick={() => changeZoom(1)}
+                title="恢复适宽 (⌘ 0)"
+                aria-label="恢复适宽"
+              >
+                适宽
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -898,6 +939,15 @@ export function PdfReader({
           >
             <Icon name="settings" size={18} />
           </button>
+          <button
+            type="button"
+            className="icon-button toolbar-icon"
+            onClick={() => setShortcutsOpen(true)}
+            title="键盘快捷键 (?)"
+            aria-label="查看键盘快捷键"
+          >
+            <Icon name="help" size={17} />
+          </button>
         </div>
         <div className="reader-progress-bar" aria-hidden="true">
           <span style={{ width: `${readerProgress}%` }} />
@@ -935,6 +985,19 @@ export function PdfReader({
         </div>
 
         {loadStatus === 'ready' ? <PdfScrollbar scrollRootRef={scrollRootRef} /> : null}
+
+        {showBackToTop && loadStatus === 'ready' ? (
+          <button
+            type="button"
+            className="back-to-top"
+            onClick={() => scrollToPage(1)}
+            title="回到第一页"
+            aria-label="回到第一页"
+            data-selection-ignore="true"
+          >
+            <Icon name="arrow-up" size={16} />
+          </button>
+        ) : null}
 
         {loadStatus === 'loading' ? (
           <div className="reader-loading" aria-live="polite">
@@ -1064,6 +1127,46 @@ export function PdfReader({
             </button>
           </footer>
         </form>
+      </Modal>
+
+      <Modal
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+        className="small-modal shortcuts-modal"
+        ariaLabel="键盘快捷键"
+      >
+        <header className="small-modal-header">
+          <div>
+            <span className="eyebrow">KEYBOARD</span>
+            <h2>键盘快捷键</h2>
+          </div>
+        </header>
+        <dl className="shortcut-list">
+          {[
+            ['← / →', '上一页 / 下一页'],
+            ['PageUp / PageDown', '上一页 / 下一页'],
+            ['⌘ + / ⌘ −', '放大 / 缩小'],
+            ['⌘ 0', '恢复适宽'],
+            ['⌘ B', '显示或收起书架'],
+            ['⌘ F', '搜索书架'],
+            ['⌘ O', '导入 PDF'],
+            ['⌘ ,', '打开设置'],
+            ['?', '打开或关闭本面板'],
+            ['Esc', '关闭浮层、目录或面板']
+          ].map(([keys, action]) => (
+            <div key={keys} className="shortcut-row">
+              <dt>
+                <kbd>{keys}</kbd>
+              </dt>
+              <dd>{action}</dd>
+            </div>
+          ))}
+        </dl>
+        <footer className="small-modal-footer">
+          <button type="button" className="primary-button" onClick={() => setShortcutsOpen(false)}>
+            知道了
+          </button>
+        </footer>
       </Modal>
     </section>
   )
