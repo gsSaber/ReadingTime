@@ -5,6 +5,7 @@ import { join, normalize, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { LibraryStore } from './library-store'
 import { SettingsStore } from './settings-store'
+import { TranslationFeedback } from './translation-feedback'
 import { LlmRequestError } from '../translation/errors'
 import { TranslationRuntime } from '../translation/runtime'
 import { ReleaseStore } from '../translation/releases'
@@ -52,6 +53,7 @@ let mainWindow: BrowserWindow | null = null
 let settingsStore: SettingsStore
 let libraryStore: LibraryStore
 let translationRuntime: TranslationRuntime
+let translationFeedback: TranslationFeedback
 let rendererReady = false
 const pendingOpenPaths: string[] = []
 const translationControllers = new Map<
@@ -401,6 +403,7 @@ function registerIpc(): void {
   ipcMain.handle('settings:test-connection', async (_event, input: ConnectionTestInput) => {
     const { baseUrl, modelId, apiKey } = settingsStore.getConnectionInput({
       baseUrl: typeof input?.baseUrl === 'string' ? input.baseUrl : '',
+      clearApiKey: input?.clearApiKey === true,
       modelId: typeof input?.modelId === 'string' ? input.modelId : '',
       apiKey: typeof input?.apiKey === 'string' ? input.apiKey : undefined
     })
@@ -480,6 +483,20 @@ function registerIpc(): void {
         controller.signal
       )
       if (!result.ok && accumulated && !result.cancelled) result.text = accumulated
+      if (result.ok && result.text && result.mode && !event.sender.isDestroyed()) {
+        result.feedbackId = translationFeedback.remember(event.sender, {
+          appVersion: app.getVersion(),
+          source: input.text,
+          text: result.text,
+          targetLanguage,
+          modelId: settings.llm.modelId,
+          mode: result.mode,
+          context: input.context && { before: input.context.before, after: input.context.after },
+          runtimeId: result.runtimeId,
+          runtimeVersion: result.runtimeVersion,
+          strategyVersion: result.strategyVersion
+        })
+      }
       return result
     } catch (error) {
       const normalized =
@@ -513,6 +530,8 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('translation-runtime:status', () => translationRuntime.status())
+  ipcMain.handle('translate:feedback', (event, id, vote, reason) =>
+    translationFeedback.save(event.sender, id, vote, reason))
   ipcMain.handle('translation-runtime:rollback', () => translationRuntime.rollback())
   ipcMain.handle('translation-runtime:restore', () => translationRuntime.restoreBuiltin())
   ipcMain.handle('translation-runtime:import', async (event) => {
@@ -579,6 +598,7 @@ if (hasSingleInstanceLock) {
       if (existsSync(devIcon)) app.dock?.setIcon(devIcon)
     }
     settingsStore = new SettingsStore(app.getPath('userData'))
+    translationFeedback = new TranslationFeedback(app.getPath('userData'))
     syncNativeTheme()
     libraryStore = new LibraryStore(app.getPath('userData'))
     translationRuntime = new TranslationRuntime(

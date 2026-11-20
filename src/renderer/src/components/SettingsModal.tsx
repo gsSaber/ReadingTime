@@ -8,6 +8,7 @@ import type {
   TranslationFont
 } from '@shared/types'
 import { FONT_OPTIONS, MODEL_PRESETS, TARGET_LANGUAGES } from '../lib/constants'
+import { modelEndpointUrl, sameModelEndpoint } from '@shared/model-endpoint'
 import { cn } from '../lib/format'
 import { Icon } from './Icon'
 import { Modal, ModalCloseButton, Toggle } from './Modal'
@@ -86,9 +87,12 @@ export function SettingsModal({
   )
 
   const endpointPreview = useMemo(() => {
-    const value = baseUrl.trim().replace(/\/+$/, '')
-    if (!value) return '等待填写 Base URL'
-    return /\/chat\/completions$/i.test(value) ? value : `${value}/chat/completions`
+    if (!baseUrl.trim()) return '等待填写 Base URL'
+    try {
+      return modelEndpointUrl(baseUrl).href
+    } catch {
+      return '请输入完整的服务地址'
+    }
   }, [baseUrl])
 
   const languageOptions = useMemo(() => {
@@ -103,13 +107,21 @@ export function SettingsModal({
     setPreferences((current) => ({ ...current, ...patch }))
   }
 
+  const savedKeyAvailable = settings.llm.apiKeyConfigured && sameModelEndpoint(baseUrl, settings.llm.baseUrl)
+  const changeBaseUrl = (value: string): void => {
+    if (!sameModelEndpoint(baseUrl, value)) setApiKey('')
+    setBaseUrl(value)
+    setTest({ status: 'idle', message: '' })
+  }
+
   const handleTest = async (): Promise<void> => {
     setTest({ status: 'loading', message: '正在连接模型服务…' })
     try {
       const result: ConnectionTestResult = await window.readingTime.settings.testConnection({
         baseUrl,
         modelId,
-        ...(clearApiKey ? {} : apiKey.trim() ? { apiKey: apiKey.trim() } : {})
+        clearApiKey,
+        apiKey: apiKey.trim()
       })
       setTest({
         status: result.ok ? 'success' : 'error',
@@ -237,9 +249,8 @@ export function SettingsModal({
                         type="button"
                         className={cn('preset-card', activePreset === preset.id && 'is-active')}
                         onClick={() => {
-                          setBaseUrl(preset.baseUrl)
+                          changeBaseUrl(preset.baseUrl)
                           setModelId(preset.modelId)
-                          setTest({ status: 'idle', message: '' })
                         }}
                       >
                         <span className="preset-mark">{preset.name.slice(0, 1)}</span>
@@ -263,10 +274,7 @@ export function SettingsModal({
                       <input
                         type="url"
                         value={baseUrl}
-                        onChange={(event) => {
-                          setBaseUrl(event.target.value)
-                          setTest({ status: 'idle', message: '' })
-                        }}
+                        onChange={(event) => changeBaseUrl(event.target.value)}
                         placeholder="https://api.openai.com/v1"
                         spellCheck={false}
                         autoComplete="off"
@@ -290,7 +298,7 @@ export function SettingsModal({
                     <label className="field">
                       <span>
                         API Key
-                        {settings.llm.apiKeyConfigured ? (
+                        {savedKeyAvailable ? (
                           <em className="field-badge">已保存</em>
                         ) : null}
                       </span>
@@ -306,7 +314,7 @@ export function SettingsModal({
                           placeholder={
                             clearApiKey
                               ? '保存后将清除已保存的密钥'
-                              : settings.llm.apiKeyConfigured
+                              : savedKeyAvailable
                                 ? '留空则保持现有密钥不变'
                                 : '无需鉴权的本地模型可留空'
                           }
@@ -325,16 +333,18 @@ export function SettingsModal({
                       <small>
                         {clearApiKey
                           ? '关闭设置前保存才会生效。'
-                          : settings.llm.keyStorage === 'encrypted'
-                            ? '密钥由 macOS 钥匙串加密保存在本机。'
-                            : settings.llm.keyStorage === 'plaintext'
-                              ? '系统钥匙串不可用，当前密钥以本地可读形式保存。'
-                              : '密钥加密保存在本机，仅用于向你配置的模型服务鉴权。'}
+                          : !savedKeyAvailable && settings.llm.apiKeyConfigured
+                            ? '保存新服务后会移除旧密钥。新服务需要鉴权时，请填写对应密钥。'
+                            : settings.llm.keyStorage === 'encrypted'
+                              ? '密钥由 macOS 钥匙串加密保存在本机。'
+                              : settings.llm.keyStorage === 'plaintext'
+                                ? '系统钥匙串不可用，当前密钥以本地可读形式保存。'
+                                : '密钥仅用于向当前模型服务鉴权。'}
                       </small>
                     </label>
                   </div>
                   <div className="key-row">
-                    {settings.llm.apiKeyConfigured && !clearApiKey ? (
+                    {savedKeyAvailable && !clearApiKey ? (
                       <button
                         type="button"
                         className="text-button danger-text"
@@ -555,6 +565,10 @@ export function SettingsModal({
                     <li>
                       <Icon name="check" size={15} />
                       阅读进度、书架目录和偏好全部保存在本机。
+                    </li>
+                    <li>
+                      <Icon name="check" size={15} />
+                      评价后，原文、译文、选区语境和理由保存在本机。撤销评价会删除这条记录。
                     </li>
                     <li>
                       <Icon name="check" size={15} />

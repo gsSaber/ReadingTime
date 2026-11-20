@@ -3,6 +3,7 @@ import type { LookupEntry, SelectionContext, TranslationFont, TranslationMode } 
 import { TARGET_LANGUAGES } from '../lib/constants'
 import { clamp, cn } from '../lib/format'
 import { Icon } from './Icon'
+import { ResultFeedback } from './ResultFeedback'
 
 export interface TranslationAnchor {
   left: number
@@ -12,6 +13,7 @@ export interface TranslationAnchor {
 }
 
 export interface TranslationViewState {
+  feedbackId?: string
   requestId: string
   sourceText: string
   targetLanguage: string
@@ -331,6 +333,9 @@ export function TranslationPopup({
         {translation.truncated ? (
           <p className="translation-truncated">选区较长，已截取前 8000 个字符翻译。</p>
         ) : null}
+        {isDone && translation.feedbackId && (
+          <ResultFeedback key={translation.feedbackId} id={translation.feedbackId} />
+        )}
       </div>
 
       {appearanceOpen ? (

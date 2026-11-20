@@ -61,6 +61,7 @@ export interface SaveSettingsResult {
 }
 
 export interface ConnectionTestInput {
+  clearApiKey?: boolean
   baseUrl: string
   modelId: string
   apiKey?: string
@@ -112,7 +113,10 @@ export interface TranslateError {
     | 'unknown'
 }
 
+export type TranslationVote = 'up' | 'down'
+
 export interface TranslateResult {
+  feedbackId?: string
   ok: boolean
   text?: string
   error?: TranslateError
@@ -168,6 +172,7 @@ export interface ReadingTimeApi {
     testConnection: (input: ConnectionTestInput) => Promise<ConnectionTestResult>
   }
   translate: {
+    feedback: (id: string, vote: TranslationVote | null, reason?: string) => Promise<{ ok: boolean; error?: string }>
     start: (input: TranslateInput) => Promise<TranslateResult>
     cancel: (requestId: string) => Promise<void>
     onDelta: (callback: (payload: TranslationDelta) => void) => () => void

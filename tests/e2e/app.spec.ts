@@ -1,6 +1,6 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { createServer, type Server } from 'node:http'
-import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
@@ -190,45 +190,15 @@ async function configureModel(
   await expect(page.locator('.settings-modal')).toHaveCount(0)
 }
 
-async function selectVisibleText(page: Page, lineOffset = 0): Promise<void> {
-  const coords = await page.evaluate((offset: number) => {
-    const viewportHeight = window.innerHeight
-    const rows: Array<{ rect: { top: number; bottom: number; left: number; right: number; height: number }; text: string }> = []
-    for (const span of document.querySelectorAll<HTMLElement>('.pdf-text-layer span')) {
-      if (span.firstChild?.nodeType !== Node.TEXT_NODE) continue
-      const rect = span.getBoundingClientRect()
-      if (rect.top <= 140 || rect.bottom >= viewportHeight - 180 || rect.height <= 5) continue
-      const last = rows.at(-1)
-      if (last && Math.abs(last.rect.top - rect.top) < 2) {
-        last.rect.left = Math.min(last.rect.left, rect.left)
-        last.rect.right = Math.max(last.rect.right, rect.right)
-        last.text += span.textContent
-      } else rows.push({ rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, height: rect.height }, text: span.textContent || '' })
-    }
-    const spans = rows.filter(row => row.text.trim().length > 12)
-    if (spans.length < 2) return null
-    const start = spans[Math.min(offset, spans.length - 2)]
-    const end = spans[Math.min(offset + 1, spans.length - 1)]
-    return {
-      x1: start.rect.left + 8,
-      y1: start.rect.top + start.rect.height * 0.55,
-      x2: Math.min(end.rect.right - 8, start.rect.right - 8),
-      y2: end.rect.top + end.rect.height * 0.55
-    }
-  }, lineOffset)
-  if (!coords) throw new Error('No selectable PDF text was found.')
-  await page.mouse.move(coords.x1, coords.y1)
-  await page.mouse.down()
-  await page.mouse.move(coords.x2, coords.y2, { steps: 16 })
-  await page.mouse.up()
-}
-
 async function selectPdfTerm(page: Page, term: string, within: string): Promise<void> {
   const coords = await page.evaluate(({ term, within }) => {
     const layer = [...document.querySelectorAll<HTMLElement>('.pdf-text-layer')]
       .find((element) => element.textContent?.includes(within))
     if (!layer) throw new Error(`No PDF text contains ${within}`)
+    // A drag starting in an existing selection may move it instead of selecting new text.
+    window.getSelection()?.removeAllRanges()
     const index = layer.textContent!.indexOf(term, layer.textContent!.indexOf(within))
+    if (index < 0) throw new Error('Missing fixture term: ' + term)
     const range = document.createRange()
     const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT)
     let offset = 0
@@ -266,7 +236,7 @@ test('reads, translates with a real mouse selection, restores progress, and mana
     await configureModel(page, mock.baseUrl)
     await expect(page.locator('.model-status strong')).toHaveText('mock-translator')
 
-    await selectVisibleText(page, 0)
+    await selectPdfTerm(page, 'Reading is not a race. It is a conversation', 'Reading is not a race')
     await expect(page.locator('.translation-popup')).toBeVisible()
     await expect(page.locator('.translation-text')).toHaveText(
       '阅读不是一场竞赛。它是两个心灵跨越时间的对话。'
@@ -344,7 +314,7 @@ test('shows helpful errors for a missing model and rejected credentials', async 
   try {
     await page.waitForSelector('.pdf-text-layer span', { timeout: 20_000 })
 
-    await selectVisibleText(page, 0)
+    await selectPdfTerm(page, 'Reading is not a race. It is a conversation', 'Reading is not a race')
     await expect(page.locator('.translation-popup')).toBeVisible()
     await expect(page.locator('.translation-error')).toContainText('还没有配置翻译模型')
     await expect(page.getByRole('button', { name: /打开模型设置/ })).toBeVisible()
@@ -353,7 +323,7 @@ test('shows helpful errors for a missing model and rejected credentials', async 
 
     await page.getByRole('button', { name: '关闭翻译' }).click()
     await configureModel(page, mock.baseUrl, { expectConnection: 'error' })
-    await selectVisibleText(page, 1)
+    await selectPdfTerm(page, 'When we slow down, a page can become a room', 'When we slow down')
     await expect(page.locator('.translation-popup')).toBeVisible()
     await expect(page.locator('.translation-error')).toContainText('认证失败')
     await page.waitForTimeout(300)
@@ -363,6 +333,88 @@ test('shows helpful errors for a missing model and rejected credentials', async 
     await app.close().catch(() => {})
     await mock.close()
   }
+})
+
+test('feedback follows each completed result and can be edited or withdrawn', async () => {
+  const mock = await startMockLlm('stream', 5)
+  const { app, page, profile } = await launchApp('result-feedback', { startupPdf: FIXTURE })
+  const dir = resolve(profile, 'data', 'translation-feedback')
+  const files = () => existsSync(dir) ? readdirSync(dir).filter(name => name.endsWith('.json')) : []
+  const records = () => files().map(name => JSON.parse(readFileSync(resolve(dir, name), 'utf8')))
+  try {
+    await configureModel(page, mock.baseUrl, { apiKey: '' })
+    await page.waitForSelector('.pdf-text-layer span')
+    await selectPdfTerm(page, 'Reading is not a race. It is a conversation', 'Reading is not a race')
+    const up = page.getByRole('button', { name: '点赞', exact: true })
+    const down = page.getByRole('button', { name: '点踩', exact: true })
+    await expect(up).toBeVisible()
+    expect(files()).toHaveLength(0)
+    await down.click()
+    await page.getByRole('textbox', { name: '点踩理由' }).fill('请保留原句的语气')
+    await page.getByRole('button', { name: '保存理由' }).click()
+    await expect.poll(() => records()[0]?.reason).toBe('请保留原句的语气')
+    const [first] = records()
+    expect(first).toMatchObject({ vote: 'down', mode: 'translation', modelId: 'mock-translator',
+      strategyVersion: 'builtin-1', runtimeId: 'builtin', text: await page.locator('.translation-text').innerText() })
+    await up.click()
+    await expect.poll(() => records()).toMatchObject([{ id: first.id, vote: 'up', reason: '' }])
+    await up.click()
+    await expect.poll(files).toHaveLength(0)
+    await up.click()
+    await expect(up).toHaveAttribute('aria-pressed', 'true')
+    await page.getByRole('button', { name: '关闭翻译' }).click()
+    await selectPdfTerm(page, 'Reading', 'Reading is not a race')
+    await expect(up).toHaveAttribute('aria-pressed', 'false')
+    const selection = await page.locator('.translation-source p').innerText()
+    const lookupRequest = mock.requests.at(-1)?.body.messages as Array<{content: string}>
+    expect(JSON.parse(lookupRequest[1].content).selection).toBe(selection)
+    await down.click()
+    await expect.poll(() => records().find(entry => entry.mode === 'lookup')).toMatchObject({
+      source: selection, vote: 'down', reason: '', context: { after: expect.stringContaining('is not a race') }
+    })
+    expect(files()).toHaveLength(2)
+    expect(records().some(entry => entry.id === first.id && entry.vote === 'up')).toBe(true)
+  } finally { await app.close(); await mock.close() }
+})
+
+test('switching model endpoints scopes credentials and a failed save preserves active preferences', async () => {
+  const first = await startMockLlm()
+  const second = await startMockLlm()
+  const { app, page, profile } = await launchApp('model-switch', { startupPdf: FIXTURE })
+  try {
+    await configureModel(page, first.baseUrl)
+    await page.getByRole('button', { name: '打开设置' }).click()
+    await page.getByRole('button', { name: '模型服务', exact: true }).click()
+    const testButton = page.getByRole('button', { name: '测试连接' })
+    const address = page.getByPlaceholder('https://api.openai.com/v1', { exact: true })
+    await address.fill(first.baseUrl + '/chat/completions')
+    await testButton.click()
+    await expect.poll(() => first.requests.length).toBe(2)
+    expect(first.requests.at(-1)?.authorization).toBe('Bearer test-key-123')
+    await page.getByRole('button', { name: '移除已保存的 API Key' }).click()
+    await testButton.click()
+    await expect.poll(() => first.requests.at(-1)?.authorization).toBe('')
+    await page.getByRole('button', { name: '撤销移除' }).click()
+    await address.fill(second.baseUrl)
+    await testButton.click()
+    await expect.poll(() => second.requests.at(-1)?.authorization).toBe('')
+    await page.getByRole('button', { name: '保存设置' }).click()
+    await expect(page.locator('.settings-modal')).toHaveCount(0)
+    expect((await page.evaluate(() => window.readingTime.settings.get())).llm).toMatchObject({
+      apiKeyConfigured: false, baseUrl: second.baseUrl
+    })
+
+    // Force the atomic write to fail without changing real disk permissions.
+    const temporaryPath = resolve(profile, 'data', 'settings.json.tmp')
+    mkdirSync(temporaryPath)
+    await page.getByRole('button', { name: /^阅读主题：/ }).click()
+    await expect(page.getByText('设置保存失败，请检查应用的存储权限。', { exact: true })).toBeVisible()
+    await expect(page.locator('html')).toHaveAttribute('data-reader-tone', 'original')
+    expect((await page.evaluate(() => window.readingTime.settings.get())).preferences.readerTone).toBe('original')
+    rmSync(temporaryPath, { recursive: true })
+    await page.getByRole('button', { name: /^阅读主题：/ }).click()
+    await expect(page.locator('html')).toHaveAttribute('data-reader-tone', 'sepia')
+  } finally { await app.close(); await first.close(); await second.close() }
 })
 
 test('adopts strategy and executable updates without restarting the reader, drains streams and persists rollback', async () => {
@@ -585,7 +637,7 @@ test('drags the translation popup without losing its position during streaming o
   try {
     await page.waitForSelector('.pdf-text-layer span')
     await configureModel(page, mock.baseUrl)
-    await selectVisibleText(page)
+    await selectPdfTerm(page, 'Notes on attention, translation, and the pages that stay with us.', 'Notes on attention')
     const popup = page.locator('.translation-popup')
     await expect(popup).toHaveClass(/is-streaming/)
     const before = await popup.boundingBox()

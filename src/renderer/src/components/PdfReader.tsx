@@ -235,6 +235,7 @@ export function PdfReader({
                     text: result.text || previous.text,
                     mode: result.mode ?? previous.mode,
                     lookup: result.lookup,
+                    feedbackId: result.feedbackId,
                     error: undefined,
                     errorCode: undefined
                   }

@@ -2694,6 +2694,47 @@ a {
   opacity: 0.28;
 }
 
+.result-feedback {
+  margin-top: 14px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+  font: 11px/1.45 var(--font-ui);
+  color: var(--text-muted);
+}
+
+.result-feedback-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.result-feedback button {
+  padding: 3px 9px;
+  color: var(--text-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--bg-input);
+}
+
+.result-feedback button[aria-pressed="true"] {
+  color: var(--accent-bright);
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+
+.result-feedback button:disabled { opacity: 0.55; }
+.feedback-note { display: grid; gap: 5px; margin-top: 7px; justify-items: start; }
+.feedback-note textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 6px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+}
+
 /* ---------- Settings modal ---------- */
 
 .modal-layer {

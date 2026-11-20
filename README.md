@@ -106,7 +106,7 @@ npm run dist
 2. 在「模型服务」中选择预设或手动填写：
    - **Base URL**：OpenAI 兼容地址，例如 `https://api.openai.com/v1`、`https://api.deepseek.com/v1`、`http://localhost:11434/v1`。
    - **模型 ID**：例如 `gpt-4o-mini`、`deepseek-chat`、`qwen2.5:7b`。
-   - **API Key**：本地无鉴权服务可留空；留空保存不会覆盖已经保存的旧 Key。
+   - **API Key**：同一模型接口留空保存会沿用已有密钥。更换接口后请填写新密钥，无需鉴权的服务可留空。
 3. 点击「测试连接」，成功后「保存设置」。
 4. 在「翻译偏好」中设置目标语言（可直接输入任意语言名，例如 `繁體中文`、`Français`）与译文外观。
 
@@ -146,6 +146,7 @@ ollama pull qwen2.5:7b
 | 数据 | 保存位置 |
 | --- | --- |
 | PDF 副本 | `~/Library/Application Support/reading-time/library/` |
+| 主动评价的原文、译文、选区语境、目标语言、模型、翻译版本和理由 | 应用数据目录下的 `data/translation-feedback/`，每条结果一个文件。再次点击已选评价即可撤销并删除该记录。 |
 | 书架索引、阅读进度 | `~/Library/Application Support/reading-time/data/library.json` |
 | 模型配置、UI 偏好 | `~/Library/Application Support/reading-time/data/settings.json` |
 | API Key | 系统钥匙串加密后的密文，保存在上面的 `settings.json` 中 |
@@ -195,7 +196,7 @@ scripts/
 - 设置 → 翻译偏好 →「翻译版本」支持导入本地策略 JSON 或翻译模块更新包、回滚上一版本、恢复内置版本。
 - 更新先做兼容性检查，再将新请求切换到新进程；正在输出的旧翻译继续完成，阅读窗口无需重启。
 - 提示词、术语表、查词路由和翻译执行代码可通过版本包更新；窗口、存储、preload 和 Electron 等基础设施仍按应用版本升级。
-- 提供独立的 `npm run runtime:pack` 构建命令，为后续反馈驱动的自动改进提供模块边界。本次不包含点赞反馈和 LLM 自动修改代码。
+- 翻译和查词完成后可点赞或点踩，点踩支持选填理由。反馈保存在本机。翻译更新包通过 `npm run runtime:pack` 构建，在设置中手动导入。
 
 使用方式、代码接口、信任边界和验证限制见 [翻译运行架构](docs/translation-runtime.md)。
 

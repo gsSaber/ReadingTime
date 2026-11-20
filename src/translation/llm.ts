@@ -1,3 +1,4 @@
+import { modelEndpointUrl } from '../shared/model-endpoint.ts'
 import type { ConnectionTestResult, LookupEntry, LookupResponse, SelectionContext } from '../shared/types'
 
 export { LlmRequestError } from './errors.ts'
@@ -35,15 +36,14 @@ export function resolveChatEndpoint(baseUrl: string): string {
   }
   let parsed: URL
   try {
-    parsed = new URL(value)
+    parsed = modelEndpointUrl(value)
   } catch {
     throw new LlmRequestError('Base URL 格式不正确，请填入完整地址。', 'bad_request')
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new LlmRequestError('Base URL 必须使用 http:// 或 https://。', 'bad_request')
   }
-  const trimmed = value.replace(/\/+$/, '')
-  return /\/chat\/completions$/i.test(trimmed) ? trimmed : `${trimmed}/chat/completions`
+  return parsed.href
 }
 
 export function buildTranslationMessages(

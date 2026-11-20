@@ -1,11 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { safeStorage } from 'electron'
+import { sameModelEndpoint } from '../shared/model-endpoint'
 import {
   DEFAULT_BASE_URL,
   DEFAULT_PREFERENCES,
   DEFAULT_TARGET_LANGUAGE,
   type AppSettings,
+  type ConnectionTestInput,
   type PublicLlmConfig,
   type ReaderTone,
   type SaveSettingsInput,
@@ -78,7 +80,7 @@ export class SettingsStore {
         version: 1,
         llm: {
           baseUrl:
-            typeof llm.baseUrl === 'string' && llm.baseUrl.trim()
+            typeof llm.baseUrl === 'string'
               ? llm.baseUrl.trim()
               : defaults.llm.baseUrl,
           modelId: typeof llm.modelId === 'string' ? llm.modelId.trim() : '',
@@ -132,9 +134,9 @@ export class SettingsStore {
     }
   }
 
-  private persist(): void {
+  private persist(next: StoredSettings): void {
     const temporaryPath = `${this.filePath}.tmp`
-    writeFileSync(temporaryPath, JSON.stringify(this.data, null, 2), {
+    writeFileSync(temporaryPath, JSON.stringify(next, null, 2), {
       encoding: 'utf8',
       mode: 0o600
     })
@@ -172,7 +174,7 @@ export class SettingsStore {
   }
 
   private toPublicConfig(): PublicLlmConfig {
-    const hasKey = Boolean(this.getApiKey())
+    const hasKey = Boolean(this.data.llm.apiKey)
     return {
       baseUrl: this.data.llm.baseUrl,
       modelId: this.data.llm.modelId,
@@ -198,6 +200,7 @@ export class SettingsStore {
       return { ok: false, error: '无效的设置内容。' }
     }
 
+    const next = structuredClone(this.data)
     if (typeof input.baseUrl === 'string') {
       const baseUrl = input.baseUrl.trim().slice(0, 500)
       if (baseUrl) {
@@ -209,53 +212,56 @@ export class SettingsStore {
         } catch {
           return { ok: false, error: 'Base URL 格式不正确，请填入完整地址。' }
         }
-        this.data.llm.baseUrl = baseUrl.replace(/\/+$/, '')
+        next.llm.baseUrl = baseUrl
       } else {
-        this.data.llm.baseUrl = ''
+        next.llm.baseUrl = ''
       }
     }
 
     if (typeof input.modelId === 'string') {
-      this.data.llm.modelId = input.modelId.trim().slice(0, 200)
+      next.llm.modelId = input.modelId.trim().slice(0, 200)
     }
 
     if (typeof input.targetLanguage === 'string') {
-      this.data.llm.targetLanguage =
+      next.llm.targetLanguage =
         input.targetLanguage.trim().slice(0, 50) || DEFAULT_TARGET_LANGUAGE
     }
 
-    if (input.clearApiKey) {
-      delete this.data.llm.apiKey
-      delete this.data.llm.apiKeyEncoding
-    } else if (typeof input.apiKey === 'string' && input.apiKey.trim()) {
-      Object.assign(this.data.llm, this.encryptApiKey(input.apiKey.trim()))
+    if (input.clearApiKey || (typeof input.baseUrl === 'string' && !sameModelEndpoint(next.llm.baseUrl, this.data.llm.baseUrl))) {
+      delete next.llm.apiKey
+      delete next.llm.apiKeyEncoding
     }
 
     if (isRecord(input.preferences)) {
-      this.data.preferences = this.normalizePreferences(
-        { ...this.data.preferences, ...input.preferences },
-        this.data.preferences
+      next.preferences = this.normalizePreferences(
+        { ...next.preferences, ...input.preferences },
+        next.preferences
       )
     }
 
     try {
-      this.persist()
+      if (!input.clearApiKey && typeof input.apiKey === 'string' && input.apiKey.trim()) {
+        Object.assign(next.llm, this.encryptApiKey(input.apiKey.trim()))
+      }
+      this.persist(next)
+      this.data = next
       return { ok: true, settings: this.get() }
     } catch (error) {
       console.error('[settings] Failed to persist settings.', error)
-      return { ok: false, error: '设置保存失败，请检查应用的存储权限。' }
+      return { ok: false, settings: this.get(), error: '设置保存失败，请检查应用的存储权限。' }
     }
   }
 
-  getConnectionInput(overrides: {
-    baseUrl: string
-    modelId: string
-    apiKey?: string
-  }): { baseUrl: string; modelId: string; apiKey: string | null } {
+  getConnectionInput(overrides: ConnectionTestInput): { baseUrl: string; modelId: string; apiKey: string | null } {
+    const baseUrl = cleanString(overrides.baseUrl, 500) || ''
+    let apiKey: string | null = null
+    if (!overrides.clearApiKey) {
+      apiKey = overrides.apiKey?.trim() || (sameModelEndpoint(baseUrl, this.data.llm.baseUrl) ? this.getApiKey() : null)
+    }
     return {
-      baseUrl: cleanString(overrides.baseUrl, 500) || this.data.llm.baseUrl,
-      modelId: cleanString(overrides.modelId, 200) || this.data.llm.modelId,
-      apiKey: cleanString(overrides.apiKey, 1000) || this.getApiKey()
+      baseUrl,
+      modelId: cleanString(overrides.modelId, 200) || '',
+      apiKey
     }
   }
 }

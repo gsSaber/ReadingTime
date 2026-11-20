@@ -116,6 +116,19 @@ export default function App(): React.JSX.Element {
     setSettings(next)
   }, [])
 
+  const saveQuickPreference = useCallback(async (next: AppSettings, patch: SaveSettingsInput) => {
+    const previous = settingsRef.current
+    applySettings(next)
+    try {
+      const result = await window.readingTime.settings.save(patch)
+      if (settingsRef.current === next && result.settings) applySettings(result.settings)
+      if (!result.ok) throw new Error(result.error || '偏好保存失败。')
+    } catch (error) {
+      if (settingsRef.current === next && previous) applySettings(previous)
+      showToast(error instanceof Error ? error.message : '偏好保存失败。', 'error')
+    }
+  }, [applySettings, showToast])
+
   const updatePreferences = useCallback(
     (patch: Partial<AppSettings['preferences']>) => {
       const current = settingsRef.current
@@ -124,19 +137,9 @@ export default function App(): React.JSX.Element {
         ...current,
         preferences: { ...current.preferences, ...patch }
       }
-      applySettings(next)
-      void window.readingTime.settings
-        .save({ preferences: next.preferences })
-        .then((result) => {
-          if (!result.ok) {
-            showToast(result.error || '阅读偏好保存失败。', 'error')
-          }
-        })
-        .catch((error: unknown) => {
-          showToast(error instanceof Error ? error.message : '阅读偏好保存失败。', 'error')
-        })
+      void saveQuickPreference(next, { preferences: patch })
     },
-    [applySettings, showToast]
+    [saveQuickPreference]
   )
 
   const changeTargetLanguage = useCallback(
@@ -147,17 +150,9 @@ export default function App(): React.JSX.Element {
         ...current,
         llm: { ...current.llm, targetLanguage: language }
       }
-      applySettings(next)
-      void window.readingTime.settings
-        .save({ targetLanguage: language })
-        .then((result) => {
-          if (!result.ok) showToast(result.error || '目标语言保存失败。', 'error')
-        })
-        .catch((error: unknown) => {
-          showToast(error instanceof Error ? error.message : '目标语言保存失败。', 'error')
-        })
+      void saveQuickPreference(next, { targetLanguage: language })
     },
-    [applySettings, showToast]
+    [saveQuickPreference]
   )
 
   const saveAllSettings = useCallback(

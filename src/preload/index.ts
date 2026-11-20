@@ -29,6 +29,7 @@ const api: ReadingTimeApi = {
       ipcRenderer.invoke('settings:test-connection', input)
   },
   translate: {
+    feedback: (id, vote, reason) => ipcRenderer.invoke('translate:feedback', id, vote, reason),
     start: (input: TranslateInput) => ipcRenderer.invoke('translate:start', input),
     cancel: (requestId: string) => ipcRenderer.invoke('translate:cancel', requestId),
     onDelta: (callback) => {

@@ -37,6 +37,10 @@ test('resolveChatEndpoint normalizes OpenAI-compatible base URLs', () => {
   assert.throws(() => resolveChatEndpoint(''), /Base URL/)
   assert.throws(() => resolveChatEndpoint('not-a-url'), /格式不正确/)
   assert.throws(() => resolveChatEndpoint('ftp://example.com/v1'), /http/)
+  assert.equal(
+    resolveChatEndpoint('https://example.com/custom/v1/?deployment=reader#local'),
+    'https://example.com/custom/v1/chat/completions?deployment=reader'
+  )
 })
 
 test('vocabulary prompt carries the occurrence context and handles phrases and short sentences', () => {
