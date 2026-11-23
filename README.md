@@ -35,6 +35,7 @@
 
 ### 本地 PDF 书架
 
+
 - 导入 PDF 时复制到应用专属资料库，不依赖源文件路径。
 - 书架检索、重命名、删除、最近阅读、阅读进度百分比。
 - 拖拽 PDF 到窗口即可导入；支持一次导入多个文件；基于 SHA-256 去重。
@@ -86,7 +87,7 @@ npm run build     # 类型检查 + 构建到 out/
 npm start         # 预览生产构建
 ```
 
-生成 macOS 安装包（`release/`）：
+生成 macOS 安装包（`release/build.noindex/`，避免 Spotlight 将构建副本列入应用搜索）：
 
 ```bash
 npm run dist
@@ -94,9 +95,9 @@ npm run dist
 
 产物：
 
-- `release/ReadingTime-1.0.7-arm64.dmg`
-- `release/ReadingTime-1.0.7-arm64.zip`
-- `release/mac-arm64/阅读时光.app`
+- `release/build.noindex/ReadingTime-1.0.7-arm64.dmg`
+- `release/build.noindex/ReadingTime-1.0.7-arm64.zip`
+- `release/build.noindex/mac-arm64/阅读时光.app`
 
 > 当前构建使用 ad-hoc 签名，便于本地运行，但未使用 Apple Developer ID 证书、也未做 notarization。通过浏览器下载或拷贝到其他 Mac 时，Gatekeeper 可能要求右键 App →「打开」。如果要对外分发，请配置开发者证书签名并完成 notarization。
 
@@ -120,6 +121,10 @@ ollama pull qwen2.5:7b
 在设置中选择「Ollama 本地」，Base URL 填 `http://localhost:11434/v1`，模型 ID 填 `qwen2.5:7b`，API Key 留空。
 
 ## 使用说明
+
+**在其他 Mac 应用中划词。** 打开「设置 → 翻译偏好 → 跨应用划词翻译」，允许 macOS 辅助功能访问并保存。保持阅读时光运行，在其他应用拖选或双击文字，译文会出现在鼠标附近。窗口初次出现时保留原应用的焦点。单词和短语优先使用当前选区前后的语境，每侧最多 400 字符。源控件仅提供选中文字时，查词显示常用释义。密码控件和系统安全输入期间跳过自动读取。
+
+如果源应用无法提供选区，先复制文字，再按 **⌘⌥T**（或选择阅读时光的「编辑 → 粘贴翻译」），按 ⌘V 粘贴并点击「翻译」。该功能默认关闭，关闭并保存会同时停止全局鼠标监听和释放快捷键。
 
 - **导入**：左侧「导入 PDF」支持多选；也可以把 PDF 直接拖进窗口。
 - **翻译**：用鼠标选中文字后松开。浮层会在选区旁出现；若当前没有配置模型，会直接给出设置入口。
@@ -221,7 +226,7 @@ E2E 覆盖：
 9. 真实鼠标拖动翻译浮窗、流式/重试位置保持与窗口边界检查。
 10. 真实鼠标拖动 PDF 滚动条与侧栏分隔线，检查页码、阅读位置与重启后宽度恢复。
 11. 单词、词组、同词异境、短句回退、目标语言、释义复制与无语境/格式错误处理。
-12. 设置 `READING_TIME_TEST_PACKAGED=1` 时额外验证 `release/mac-arm64/阅读时光.app` 的启动、PDF 打开与主题切换。
+12. 设置 `READING_TIME_TEST_PACKAGED=1` 时额外验证 `release/build.noindex/mac-arm64/阅读时光.app` 的启动、PDF 打开与主题切换。
 13. 按 PDF 字形坐标真实拖选 `proposal`，验证 100% / 160% 缩放、正反向拖选、原文右键复制与快捷键复制。设置 `READING_TIME_SELECTION_PDF` 为包含示例段落的原书路径时，额外验证其第 58 页；默认使用仓库内带字距调整的测试 PDF。
 
 单测覆盖 OpenAI 兼容端点规范化、翻译提示词、SSE 流式解析、401 映射、连接测试。

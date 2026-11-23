@@ -25,6 +25,7 @@ export interface ImportResult {
 }
 
 export interface TranslationPreferences {
+  externalSelection: boolean
   autoTranslate: boolean
   translationFont: TranslationFont
   translationFontSize: number
@@ -86,6 +87,19 @@ export type TranslationMode = 'translation' | 'lookup'
 export interface SelectionContext {
   before: string
   after: string
+}
+
+export interface ExternalSelection {
+  text: string
+  context?: SelectionContext
+}
+
+export interface ExternalStatus {
+  supported: boolean
+  trusted: boolean
+  monitoring: boolean
+  shortcut: boolean
+  error?: string
 }
 
 export interface LookupEntry {
@@ -150,11 +164,21 @@ export interface TranslationDelta {
 }
 
 export type AppCommand =
+  | { type: 'settings-changed'; settings: AppSettings }
   | { type: 'import' }
   | { type: 'settings' }
   | { type: 'import-paths'; paths: string[] }
 
 export interface ReadingTimeApi {
+  external: {
+    status: () => Promise<ExternalStatus>
+    authorize: () => Promise<ExternalStatus>
+    initial: () => Promise<ExternalSelection | null>
+    resize: (height: number) => void
+    move: (x: number, y: number) => void
+    close: () => void
+    settings: () => void
+  }
   library: {
     list: () => Promise<LibraryEntry[]>
     importDialog: () => Promise<ImportResult>
@@ -193,6 +217,7 @@ export interface ReadingTimeApi {
 }
 
 export const DEFAULT_PREFERENCES: TranslationPreferences = {
+  externalSelection: false,
   autoTranslate: true,
   translationFont: 'serif',
   translationFontSize: 17,

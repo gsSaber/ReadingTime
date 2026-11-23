@@ -309,6 +309,7 @@ export default function App(): React.JSX.Element {
   )
 
   commandHandlerRef.current = (command: AppCommand): void => {
+    if (command.type === 'settings-changed') { applySettings(command.settings); return }
     if (command.type === 'import') {
       openImportDialog()
     } else if (command.type === 'settings') {

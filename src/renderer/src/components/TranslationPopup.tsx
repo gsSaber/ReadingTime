@@ -29,6 +29,7 @@ export interface TranslationViewState {
 }
 
 interface TranslationPopupProps {
+  standalone?: boolean
   translation: TranslationViewState
   font: TranslationFont
   fontSize: number
@@ -52,6 +53,7 @@ const FONT_CHOICES: Array<{ value: TranslationFont; label: string; glyph: string
 ]
 
 export function TranslationPopup({
+  standalone = false,
   translation,
   font,
   fontSize,
@@ -86,6 +88,15 @@ export function TranslationPopup({
   }, [translation.targetLanguage])
 
   useEffect(() => {
+    const dismissOutside = (event: PointerEvent): void => {
+      const card = cardRef.current
+      if (event.button === 0 && card && !event.composedPath().includes(card)) onClose()
+    }
+    document.addEventListener('pointerdown', dismissOutside, true)
+    return () => document.removeEventListener('pointerdown', dismissOutside, true)
+  }, [onClose])
+
+  useEffect(() => {
     setSourceExpanded(false)
     setAppearanceOpen(false)
     setCopied(false)
@@ -100,6 +111,13 @@ export function TranslationPopup({
   useLayoutEffect(() => {
     const card = cardRef.current
     if (!card) return
+    if (standalone) {
+      const resize = (): void => window.readingTime.external.resize(card.offsetHeight)
+      resize()
+      const observer = new ResizeObserver(resize)
+      observer.observe(card)
+      return () => observer.disconnect()
+    }
     // A new selection anchors a new popup; retries keep the manually chosen position.
     manualPositionRef.current = null
     dragRef.current = null
@@ -156,9 +174,13 @@ export function TranslationPopup({
       observer.disconnect()
       window.removeEventListener('resize', place)
     }
-  }, [translation.anchor])
+  }, [translation.anchor, standalone])
 
   const moveTo = (left: number, top: number, height: number): void => {
+    if (standalone) {
+      window.readingTime.external.move(left, top)
+      return
+    }
     const card = cardRef.current
     if (!card) return
     const next = {
@@ -190,7 +212,7 @@ export function TranslationPopup({
     <div
       ref={cardRef}
       className={cn('translation-popup', `is-${translation.status}`, `place-${placement}`, dragging && 'is-dragging')}
-      style={{ left: position.left, top: position.top, maxHeight: position.maxHeight }}
+      style={standalone ? undefined : { left: position.left, top: position.top, maxHeight: position.maxHeight }}
       data-selection-ignore="true"
       role="dialog"
       aria-label={isLookup ? '词语释义' : '划词翻译'}
@@ -203,10 +225,12 @@ export function TranslationPopup({
           const bounds = cardRef.current?.getBoundingClientRect()
           if (!bounds) return
           event.preventDefault()
-          manualPositionRef.current = { left: bounds.left, top: bounds.top }
+          const left = standalone ? window.screenX : bounds.left
+          const top = standalone ? window.screenY : bounds.top
+          if (!standalone) manualPositionRef.current = { left, top }
           dragRef.current = {
-            pointerId: event.pointerId, x: event.clientX, y: event.clientY,
-            left: bounds.left, top: bounds.top, height: bounds.height
+            pointerId: event.pointerId, x: standalone ? event.screenX : event.clientX,
+            y: standalone ? event.screenY : event.clientY, left, top, height: bounds.height
           }
           event.currentTarget.setPointerCapture(event.pointerId)
           setDragging(true)
@@ -214,7 +238,9 @@ export function TranslationPopup({
         onPointerMove={(event) => {
           const drag = dragRef.current
           if (!drag || drag.pointerId !== event.pointerId) return
-          moveTo(drag.left + event.clientX - drag.x, drag.top + event.clientY - drag.y, drag.height)
+          const x = standalone ? event.screenX : event.clientX
+          const y = standalone ? event.screenY : event.clientY
+          moveTo(drag.left + x - drag.x, drag.top + y - drag.y, drag.height)
         }}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
@@ -231,8 +257,10 @@ export function TranslationPopup({
             const bounds = cardRef.current?.getBoundingClientRect()
             if (!bounds) return
             const step = event.shiftKey ? 40 : 10
-            moveTo(bounds.left + (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0),
-              bounds.top + (event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0), bounds.height)
+            const left = standalone ? window.screenX : bounds.left
+            const top = standalone ? window.screenY : bounds.top
+            moveTo(left + (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0),
+              top + (event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0), bounds.height)
           }}
         >
           <span className="translation-mark">译</span>

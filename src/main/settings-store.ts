@@ -107,6 +107,7 @@ export class SettingsStore {
     fallback: TranslationPreferences = DEFAULT_PREFERENCES
   ): TranslationPreferences {
     return {
+      externalSelection: typeof input.externalSelection === 'boolean' ? input.externalSelection : fallback.externalSelection,
       autoTranslate:
         typeof input.autoTranslate === 'boolean'
           ? input.autoTranslate

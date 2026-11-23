@@ -16,8 +16,8 @@
     "test:unit": "node --experimental-strip-types --no-warnings --test tests/unit/*.test.mjs",
     "prepare:pdfjs": "node scripts/copy-pdfjs-assets.mjs",
     "runtime:pack": "node --experimental-strip-types --no-warnings scripts/build-translation-update.mjs",
-    "predev": "npm run prepare:pdfjs",
-    "prebuild": "npm run prepare:pdfjs",
+    "predev": "npm run prepare:pdfjs && node scripts/build-selection.mjs",
+    "prebuild": "npm run prepare:pdfjs && node scripts/build-selection.mjs",
     "test": "npm run test:unit && npm run test:e2e"
   },
   "dependencies": {
@@ -42,7 +42,7 @@
     "productName": "阅读时光",
     "artifactName": "ReadingTime-${version}-${arch}.${ext}",
     "directories": {
-      "output": "release",
+      "output": "release/build.noindex",
       "buildResources": "build"
     },
     "files": [
@@ -50,6 +50,7 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": ["out/native/*.node"],
     "mac": {
       "category": "public.app-category.productivity",
       "target": [

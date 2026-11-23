@@ -13,6 +13,7 @@ import { cn } from '../lib/format'
 import { Icon } from './Icon'
 import { Modal, ModalCloseButton, Toggle } from './Modal'
 import { TranslationRuntimeSettings } from './TranslationRuntimeSettings'
+import { ExternalSelectionSetting } from './ExternalSelectionSetting'
 
 type SettingsTab = 'model' | 'translation' | 'reading'
 
@@ -446,6 +447,8 @@ export function SettingsModal({
                   </label>
                 </section>
 
+                <ExternalSelectionSetting enabled={preferences.externalSelection}
+                  onChange={externalSelection => patchPreferences({ externalSelection })} />
                 <section className="form-section">
                   <div className="section-heading">
                     <h3>译文外观</h3>

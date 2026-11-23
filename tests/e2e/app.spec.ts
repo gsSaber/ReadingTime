@@ -150,7 +150,7 @@ async function startMockLlm(
 
 async function launchApp(
   profileName: string,
-  opts: { startupPdf?: string; reuseProfile?: boolean } = {}
+  opts: { startupPdf?: string; reuseProfile?: boolean; executablePath?: string } = {}
 ): Promise<{ app: ElectronApplication; page: Page; profile: string; errors: string[] }> {
   mkdirSync(ARTIFACTS, { recursive: true })
   const profile = resolve(ARTIFACTS, `profile-${profileName}`)
@@ -161,8 +161,12 @@ async function launchApp(
   env.READING_TIME_USER_DATA = profile
   const args = ['.']
   if (opts.startupPdf) args.push(opts.startupPdf)
-  const app = await electron.launch({ args, cwd: ROOT, env })
+  const app = await electron.launch({ args: opts.executablePath ? args.slice(1) : args, executablePath: opts.executablePath, cwd: ROOT, env })
   const page = await app.firstWindow()
+  await app.evaluate(({ app, BrowserWindow }) => {
+    app.focus({ steal: true })
+    BrowserWindow.getAllWindows()[0].focus()
+  })
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.waitForSelector('.app-frame')
@@ -256,10 +260,8 @@ test('reads, translates with a real mouse selection, restores progress, and mana
     await page.locator('.mini-font-button[data-font="sans"]').click()
     await page.locator('.appearance-size button').last().click()
     await expect(page.locator('.mini-font-button[data-font="sans"]')).toHaveClass(/is-active/)
-    await page.getByRole('button', { name: '关闭翻译' }).click()
-    await expect(page.locator('.translation-popup')).toHaveCount(0)
-
     await page.getByRole('button', { name: 'PDF 目录' }).click()
+    await expect(page.locator('.translation-popup')).toHaveCount(0)
     await expect(page.locator('.outline-drawer')).toBeVisible()
     await expect(page.locator('.outline-row')).toHaveCount(3)
     await page.locator('.outline-row', { hasText: '02 · A Bridge Between Words' }).click()
@@ -321,7 +323,8 @@ test('shows helpful errors for a missing model and rejected credentials', async 
     await page.waitForTimeout(300)
     await page.screenshot({ path: resolve(ARTIFACTS, 'translation-not-configured.png') })
 
-    await page.getByRole('button', { name: '关闭翻译' }).click()
+    await page.locator('.pdf-page-content').first().click({ position: { x: 8, y: 8 } })
+    await expect(page.locator('.translation-popup')).toHaveCount(0)
     await configureModel(page, mock.baseUrl, { expectConnection: 'error' })
     await selectPdfTerm(page, 'When we slow down, a page can become a room', 'When we slow down')
     await expect(page.locator('.translation-popup')).toBeVisible()
@@ -540,7 +543,7 @@ test('packaged macOS app uses its own identity and opens PDFs', async () => {
   const env = { ...process.env, READING_TIME_USER_DATA: profile }
   delete env.ELECTRON_RUN_AS_NODE
   const app = await electron.launch({
-    executablePath: resolve(ROOT, 'release/mac-arm64/阅读时光.app/Contents/MacOS/阅读时光'),
+    executablePath: resolve(ROOT, 'release/build.noindex/mac-arm64/阅读时光.app/Contents/MacOS/阅读时光'),
     args: [FIXTURE], cwd: ROOT, env
   })
   const mock = await startMockLlm('stream', 5)
@@ -549,7 +552,7 @@ test('packaged macOS app uses its own identity and opens PDFs', async () => {
     const identity = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion() }))
     expect(identity.packaged).toBe(true)
     expect(identity.version).toBe(JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')).version)
-    const bundleId = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', resolve(ROOT, 'release/mac-arm64/阅读时光.app/Contents/Info.plist')], { encoding: 'utf8' }).trim()
+    const bundleId = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', resolve(ROOT, 'release/build.noindex/mac-arm64/阅读时光.app/Contents/Info.plist')], { encoding: 'utf8' }).trim()
     expect(bundleId).toBe('com.readingtime.reader')
     await expect(page.locator('.toolbar-doc h1')).toHaveText('quiet-reading')
     await page.waitForSelector('.pdf-page-content.is-rendered')
@@ -855,10 +858,13 @@ test('explains vocabulary with the selected occurrence context and preserves tra
     await page.screenshot({ path: resolve(ARTIFACTS, 'contextual-vocabulary.png') })
 
     const count = lookupRequests().length
-    await page.getByRole('button', { name: '关闭翻译' }).click()
+    // Expose the next word before dragging on the PDF underneath the floating card.
+    const titleBar = page.getByRole('button', { name: '移动翻译窗口' })
+    await titleBar.focus()
+    for (let i = 0; i < 12; i++) await titleBar.press('Shift+ArrowLeft')
     await selectPdfTerm(page, 'Reading', 'The Quiet Art of Reading')
+    await expect.poll(() => lookupRequests().length).toBe(count + 1)
     await expect(page.locator('.vocabulary-common')).toBeVisible()
-    expect(lookupRequests().length).toBe(count + 1)
     const secondInput = JSON.parse((lookupRequests().at(-1)!.body.messages as Array<{ content: string }>)[1].content)
     expect(secondInput.context).not.toEqual(firstInput.context)
 
@@ -1007,3 +1013,94 @@ for (const realPdf of [false, true]) {
     } finally { await app.close().catch(() => {}) }
   })
 }
+
+test('external selection uses optional context, a separate panel, and an explicit paste fallback', async () => {
+  test.skip(process.platform !== 'darwin')
+  const mock = await startMockLlm('stream', 5)
+  const { app, page } = await launchApp('external-selection', {
+    startupPdf: FIXTURE,
+    executablePath: process.env.READING_TIME_TEST_PACKAGED
+      ? resolve(ROOT, 'release/build.noindex/mac-arm64/阅读时光.app/Contents/MacOS/阅读时光') : undefined
+  })
+  try {
+    expect((await page.evaluate(() => window.readingTime.external.status())).monitoring).toBe(false)
+    // Replace only the OS permission and event source in this isolated Electron
+    // process; UI, native window lifetime, IPC, translation and HTTP remain real.
+    await app.evaluate(({ app, systemPreferences }) => {
+      const modules = process.getBuiltinModule('node:module')
+      const path = process.getBuiltinModule('node:path')
+      const load = modules.createRequire(path.join(app.getAppPath(), 'package.json'))
+      const file = load.resolve('./out/native/selection.node')
+      const native = load(file) // Verify the real Node-API ABI, also inside a packaged app.
+      if (!systemPreferences.isTrustedAccessibilityClient(false) && native.start(() => {}) !== false) {
+        throw new Error('Mouse monitor started without accessibility authorization')
+      }
+      load.cache[file].exports = {
+        start(fn: (json: string) => void) { Reflect.set(globalThis, 'gestureForTest', fn); return true },
+        stop() { Reflect.deleteProperty(globalThis, 'gestureForTest') }
+      }
+      systemPreferences.isTrustedAccessibilityClient = () => false
+    })
+    await configureModel(page, mock.baseUrl, { apiKey: '' })
+    await page.getByRole('button', { name: '打开设置' }).click()
+    await page.getByRole('button', { name: '翻译偏好', exact: true }).click()
+    await page.getByRole('switch', { name: /^跨应用划词翻译/ }).click()
+    await expect(page.getByRole('button', { name: '授权 macOS 辅助功能' })).toBeVisible()
+    await page.getByRole('button', { name: '保存设置' }).click()
+    expect(await page.evaluate(() => window.readingTime.external.status())).toMatchObject({ trusted: false, monitoring: false })
+    await app.evaluate(({ systemPreferences }) => { systemPreferences.isTrustedAccessibilityClient = () => true })
+    await expect.poll(() => page.evaluate(async () => (await window.readingTime.external.status()).monitoring)).toBe(true)
+    for (const context of [{ before: 'The fisherman stood on the river ', after: ' and cast his line.' }, null]) {
+      const opened = app.waitForEvent('window')
+      await app.evaluate((_electron, context) => Reflect.get(globalThis, 'gestureForTest')(JSON.stringify({
+        type: 'selection', text: 'bank', x: 450, y: 350, ...context
+      })), context)
+      const panel = await opened
+      await expect(panel.locator('.vocabulary-common')).toBeVisible()
+      const payload = mock.requests.at(-1)!.body.messages as Array<{content: string}>
+      expect(JSON.parse(payload[1].content)).toEqual({ selection: 'bank', context: context ? {
+        before: context.before.trim(), after: context.after.trim()
+      } : null })
+      if (!context) await expect(panel.locator('.vocabulary-contextual')).toContainText('未提取到可用语境')
+      expect(await panel.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(430)
+      if (context) {
+        const bounds = () => app.evaluate(({ BrowserWindow }) => {
+          const win = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('#external-selection'))!
+          return win.getBounds()
+        })
+        const before = await bounds()
+        const grip = (await panel.getByRole('button', { name: '移动翻译窗口' }).boundingBox())!
+        const x = grip.x + 30, y = grip.y + 10
+        await panel.mouse.move(x, y)
+        await panel.mouse.down()
+        await panel.mouse.move(x + 60, y + 18)
+        await panel.mouse.up()
+        const moved = { x: before.x + 60, y: before.y + 18 }
+        await expect.poll(bounds).toMatchObject(moved)
+        await panel.getByRole('button', { name: '重新查询释义' }).click()
+        await expect(panel.locator('.translation-status')).toContainText('词语释义完成')
+        await expect.poll(bounds).toMatchObject(moved)
+      }
+      const closed = panel.waitForEvent('close')
+      await app.evaluate(() => Reflect.get(globalThis, 'gestureForTest')('{"type":"dismiss"}'))
+      await closed
+    }
+    const opened = app.waitForEvent('window')
+    await app.evaluate(({ Menu }) => {
+      const action = Menu.getApplicationMenu()!.items.flatMap(menu => menu.submenu?.items ?? []).find(item => item.label === '粘贴翻译…')!
+      action.click()
+    })
+    const paste = await opened
+    const count = mock.requests.length
+    await expect(paste.getByLabel('粘贴要翻译的文字')).toHaveValue('')
+    expect(mock.requests.length).toBe(count)
+    await paste.getByLabel('粘贴要翻译的文字').fill('A complete sentence.')
+    await paste.getByRole('button', { name: '翻译', exact: true }).click()
+    await expect(paste.locator('.translation-text')).toContainText('跨越时间')
+    const closed = paste.waitForEvent('close')
+    await page.evaluate(() => window.readingTime.settings.save({ preferences: { externalSelection: false } }))
+    await closed
+    expect(await page.evaluate(() => window.readingTime.external.status())).toMatchObject({ monitoring: false, shortcut: false })
+    expect(await app.evaluate(() => Reflect.has(globalThis, 'gestureForTest'))).toBe(false)
+  } finally { await app.close(); await mock.close() }
+})

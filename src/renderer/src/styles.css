@@ -2184,6 +2184,19 @@ a {
   cursor: grabbing;
 }
 
+.external-window .translation-popup {
+  position: relative;
+  width: 100%;
+  max-height: 520px;
+  border-radius: 0;
+  animation: none;
+}
+.external-error { position: absolute; bottom: 0; background: var(--bg-panel); color: var(--danger); }
+.external-paste { display: flex; flex-direction: column; gap: 10px; padding: 16px; height: 100vh; background: var(--bg-panel); }
+.external-paste textarea { flex: 1; min-height: 30px; resize: none; padding: 8px; color: var(--text); background: var(--bg-input); border: 1px solid var(--line-strong); border-radius: 6px; }
+.external-paste > div { display: flex; justify-content: flex-end; gap: 8px; }
+.external-selection-help { margin-top: 10px; font-size: 11px; color: var(--text-muted); }
+
 .translation-head-actions {
   cursor: default;
 }

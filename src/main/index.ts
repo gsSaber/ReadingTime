@@ -5,6 +5,7 @@ import { join, normalize, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { LibraryStore } from './library-store'
 import { SettingsStore } from './settings-store'
+import { ExternalSelections } from './external-selection'
 import { TranslationFeedback } from './translation-feedback'
 import { LlmRequestError } from '../translation/errors'
 import { TranslationRuntime } from '../translation/runtime'
@@ -54,6 +55,8 @@ let settingsStore: SettingsStore
 let libraryStore: LibraryStore
 let translationRuntime: TranslationRuntime
 let translationFeedback: TranslationFeedback
+let external: ExternalSelections
+let openSettingsWhenReady = false
 let rendererReady = false
 const pendingOpenPaths: string[] = []
 const translationControllers = new Map<
@@ -68,7 +71,7 @@ function extractPdfPaths(args: string[]): string[] {
 }
 
 function sendCommand(command: AppCommand): void {
-  const window = BrowserWindow.getFocusedWindow() || mainWindow
+  const window = mainWindow
   if (window && !window.isDestroyed()) {
     window.webContents.send('app:command', command)
   }
@@ -150,7 +153,11 @@ function buildMenu(): void {
       { role: 'cut', label: '剪切' },
       { role: 'copy', label: '复制' },
       { role: 'paste', label: '粘贴' },
-      { role: 'selectAll', label: '全选' }
+      { role: 'selectAll', label: '全选' },
+      ...(isMac ? [
+        { type: 'separator' as const },
+        { label: '粘贴翻译…', enabled: settingsStore.get().preferences.externalSelection, click: () => external.paste() }
+      ] : [])
     ]
   }
 
@@ -270,6 +277,9 @@ function createWindow(): void {
     }
   })
   mainWindow = window
+  window.webContents.on('before-mouse-event', (_event, input) => {
+    if (input.type === 'mouseDown') external?.close()
+  })
 
   window.once('ready-to-show', () => {
     window.show()
@@ -334,6 +344,10 @@ function registerIpc(): void {
     if (event.sender !== mainWindow?.webContents) return
     rendererReady = true
     flushPendingPaths()
+    if (openSettingsWhenReady) {
+      openSettingsWhenReady = false
+      sendCommand({ type: 'settings' })
+    }
   })
   ipcMain.handle('library:list', (): LibraryEntry[] => libraryStore.list())
 
@@ -391,12 +405,20 @@ function registerIpc(): void {
 
   ipcMain.handle('settings:get', () => settingsStore.get())
 
-  ipcMain.handle('settings:save', (_event, input: SaveSettingsInput) => {
+  ipcMain.handle('settings:save', (event, input: SaveSettingsInput) => {
     if (typeof input !== 'object' || input === null) {
       return { ok: false, error: '无效的设置内容。' }
     }
+    const before = settingsStore.get().preferences.externalSelection
     const result = settingsStore.save(input)
-    if (result.ok) syncNativeTheme()
+    if (result.ok && result.settings) {
+      syncNativeTheme()
+      if (external.owns(event.sender)) sendCommand({ type: 'settings-changed', settings: result.settings })
+      if (before !== result.settings.preferences.externalSelection) {
+        external.configure(result.settings.preferences.externalSelection)
+        buildMenu()
+      }
+    }
     return result
   })
 
@@ -530,6 +552,21 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('translation-runtime:status', () => translationRuntime.status())
+  ipcMain.handle('external:status', () => external.status())
+  ipcMain.handle('external:authorize', event => external.status(event.sender === mainWindow?.webContents))
+  ipcMain.handle('external:initial', event => external.initial(event.sender))
+  ipcMain.on('external:resize', (event, height) => external.resize(event.sender, height))
+  ipcMain.on('external:move', (event, x, y) => external.move(event.sender, x, y))
+  ipcMain.on('external:close', event => { if (external.owns(event.sender)) external.close() })
+  ipcMain.on('external:settings', event => {
+    if (!external.owns(event.sender)) return
+    external.close()
+    if (!mainWindow) createWindow()
+    mainWindow?.show()
+    mainWindow?.focus()
+    if (rendererReady) sendCommand({ type: 'settings' })
+    else openSettingsWhenReady = true
+  })
   ipcMain.handle('translate:feedback', (event, id, vote, reason) =>
     translationFeedback.save(event.sender, id, vote, reason))
   ipcMain.handle('translation-runtime:rollback', () => translationRuntime.rollback())
@@ -581,6 +618,7 @@ function wireAppLifecycle(): void {
   app.on('before-quit', () => {
     for (const { controller } of translationControllers.values()) controller.abort()
     translationControllers.clear()
+    external?.configure(false)
     translationRuntime?.close()
   })
 }
@@ -601,6 +639,8 @@ if (hasSingleInstanceLock) {
     translationFeedback = new TranslationFeedback(app.getPath('userData'))
     syncNativeTheme()
     libraryStore = new LibraryStore(app.getPath('userData'))
+    external = new ExternalSelections(!app.isPackaged && process.env.ELECTRON_RENDERER_URL
+      ? process.env.ELECTRON_RENDERER_URL : RENDERER_URL)
     translationRuntime = new TranslationRuntime(
       new ReleaseStore(app.getPath('userData'), join(__dirname, 'translation-engine.js')),
       () => utilityProcess.fork(join(__dirname, 'translation-worker.js'), [], {
@@ -621,6 +661,7 @@ if (hasSingleInstanceLock) {
 
     registerIpc()
     registerProtocol()
+    external.configure(settingsStore.get().preferences.externalSelection)
     buildMenu()
     createWindow()
 

@@ -12,6 +12,15 @@ import type {
 } from '../shared/types'
 
 const api: ReadingTimeApi = {
+  external: {
+    status: () => ipcRenderer.invoke('external:status'),
+    authorize: () => ipcRenderer.invoke('external:authorize'),
+    initial: () => ipcRenderer.invoke('external:initial'),
+    resize: height => ipcRenderer.send('external:resize', height),
+    move: (x, y) => ipcRenderer.send('external:move', x, y),
+    close: () => ipcRenderer.send('external:close'),
+    settings: () => ipcRenderer.send('external:settings')
+  },
   library: {
     list: () => ipcRenderer.invoke('library:list') as Promise<LibraryEntry[]>,
     importDialog: () => ipcRenderer.invoke('library:import-dialog') as Promise<ImportResult>,
